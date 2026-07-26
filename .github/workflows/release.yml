@@ -44,9 +44,11 @@ jobs:
       - name: Create GitHub Release
         run: gh release create ${{ steps.version.outputs.tag }} --generate-notes
 
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1.6
+
       - name: Deploy backend to Fly.io
         working-directory: backend
-        run: curl -L https://fly.io/install.sh | sh -s -- --version-file /dev/null && /root/.fly/bin/flyctl deploy --app deepread-worker
+        run: flyctl deploy --app deepread-worker
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
