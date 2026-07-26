@@ -60,6 +60,7 @@ jobs:
         working-directory: mobile
         run: |
           flutter pub get
+          dart run build_runner build
           flutter build apk --release \
             --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
             --dart-define=SUPABASE_PUBLISHABLE_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
