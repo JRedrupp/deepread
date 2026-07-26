@@ -31,7 +31,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 
 ## Bugs
 
-- [ ] **Renderer fails on pages with a strict script-src CSP (e.g. GitHub repo pages).** `_render_with_playwright` (`backend/deepread_worker/renderer.py:125`) injects Readability via `page.add_script_tag(content=_READABILITY_JS)`, which adds an inline `<script>`. Sites whose CSP `script-src` doesn't allow `'unsafe-inline'` (github.com does not) block it, so `add_script_tag` raises and the article fails to render — e.g. `https://github.com/mulfyx/w4me-station` failed with `Executing inline script violates the following Content Security Policy directive 'script-src github.githubassets.com'`. Needs a CSP-safe injection method, e.g. `page.add_init_script` before navigation, or evaluating Readability via `page.evaluate` with the script content passed as a function argument instead of an injected `<script>` tag.
+- [ ] **Renderer fails on pages with a strict script-src CSP (e.g. GitHub repo pages, Discourse forums).** `_render_with_playwright` (`backend/deepread_worker/renderer.py:125`) injects Readability via `page.add_script_tag(content=_READABILITY_JS)`, which adds an inline `<script>`. Sites whose CSP `script-src` doesn't allow `'unsafe-inline'` block it, so `add_script_tag` raises and the article fails to render. Seen on `https://github.com/mulfyx/w4me-station` (`script-src github.githubassets.com`) and `https://discuss.grapheneos.org/d/40700-...` (Discourse's hashed/allowlisted `script-src`). Needs a CSP-safe injection method, e.g. `page.add_init_script` before navigation, or evaluating Readability via `page.evaluate` with the script content passed as a function argument instead of an injected `<script>` tag.
 
 ## Storage & scaling
 
