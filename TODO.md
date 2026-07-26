@@ -24,6 +24,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 - [ ] Cross-device sync of read/starred state — currently local-only per device
 - [ ] User-settable feed names. Feeds currently show their raw URL as the display name (`feed.title ?? feed.url` in `FeedListScreen`, and `feeds.title` is never actually populated server-side) — let the user rename a feed to something readable.
 - [ ] Delete/unsubscribe a feed. There's currently no way to remove a feed once added — needs a delete on `user_feed_subscriptions` (and probably a local cleanup of downloaded articles for that feed too).
+- [ ] Combined "all articles" view across every subscribed feed, so the user doesn't have to open each feed individually to see what's new.
 - [ ] "Last synced" timestamp shown in the UI (e.g. next to the sync button in `FeedListScreen`) — currently sync happens with no visible indication of when it last ran or succeeded.
 - [ ] Settings page — a home for sign-out (currently just an app bar icon), last-synced info, and future preferences (theme, retention, etc.) rather than piling everything into the feed list app bar.
 - [ ] Link to the app's GitHub repo somewhere in the app (e.g. settings page once it exists).
