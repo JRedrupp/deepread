@@ -20,7 +20,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
@@ -41,7 +41,7 @@ jobs:
         with:
           channel: stable
           cache: true
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: mobile/.dart_tool
           key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
