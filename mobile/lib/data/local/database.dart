@@ -41,17 +41,42 @@ class LocalArticles extends Table {
 
   BoolColumn get isRead => boolean().withDefault(const Constant(false))();
 
+  /// Verbatim copy of the remote `articles.rendered_at` value (an
+  /// ISO-8601 string, exactly as PostgREST returned it) as of when this
+  /// row's content was last fetched/verified. Null for rows downloaded
+  /// before this column existed. Stored as text, not [DateTimeColumn]:
+  /// this database has no `storeDateTimeAsText` option, so a
+  /// [DateTimeColumn] round-trips through unix-*seconds*, which would
+  /// truncate Supabase's microsecond-precision timestamps and make every
+  /// row compare as "newer than local" forever.
+  TextColumn get renderedAt => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [LocalFeeds, LocalArticles])
+/// Single-row table (always id=0) tracking sync progress: the max remote
+/// `articles.rendered_at` observed across every successfully-completed
+/// sync pass, used so later passes only fetch newly-ready/re-rendered
+/// rows instead of the full `ready` set every time.
+class SyncState extends Table {
+  IntColumn get id => integer().withDefault(const Constant(0))();
+
+  /// Verbatim ISO-8601 string of the newest `rendered_at` seen so far, or
+  /// null before the first successful sync.
+  TextColumn get articlesRenderedThrough => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [LocalFeeds, LocalArticles, SyncState])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -64,6 +89,17 @@ class AppDatabase extends _$AppDatabase {
             // sync repopulate it.
             await m.deleteTable(localArticles.actualTableName);
             await m.createTable(localArticles);
+            // createTable builds from the current Dart definition, so this
+            // table is already renderedAt-shaped — don't also addColumn.
+          } else if (from < 3) {
+            // Unlike the v1->v2 change, this is a new nullable column with
+            // no default, which SQLite supports via ALTER TABLE ADD COLUMN
+            // directly — no need to wipe every user's downloaded library.
+            await m.addColumn(localArticles, localArticles.renderedAt);
+          }
+          if (from < 3) {
+            // Needed on both the from<2 and from<3 paths above.
+            await m.createTable(syncState);
           }
         },
       );

@@ -9,25 +9,126 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/local/database.dart';
 import '../../data/remote/supabase_client.dart';
 
+/// A remote `articles` row as returned by the `fetchReadyArticles` query,
+/// parsed out of the raw PostgREST JSON map once so downstream logic
+/// doesn't repeat `as String?` casts.
+class RemoteArticleRow {
+  RemoteArticleRow.fromRow(Map<String, dynamic> row)
+      : id = row['id'] as String,
+        feedId = row['feed_id'] as String,
+        title = row['title'] as String?,
+        byline = row['byline'] as String?,
+        summary = row['summary'] as String?,
+        publishedAt = row['published_at'] as String?,
+        renderedAt = row['rendered_at'] as String?,
+        storagePath = row['storage_path'] as String?;
+
+  final String id;
+  final String feedId;
+  final String? title;
+  final String? byline;
+  final String? summary;
+  final String? publishedAt;
+  final String? renderedAt;
+  final String? storagePath;
+}
+
+/// What to do with one remote article row, given what (if anything) is
+/// already stored locally for it.
+enum ArticleSyncAction {
+  /// Nothing downloadable yet — insert/update a summary-only row.
+  insertPaywalled,
+
+  /// Download and unzip the rendered content (new article, paywall→full
+  /// upgrade, or a genuine re-render of an already-downloaded article).
+  download,
+
+  /// A pre-migration row already has this article fully downloaded but
+  /// has no recorded [LocalArticle.renderedAt] to compare against. There's
+  /// no reliable "did it change" signal for it, so don't redownload —
+  /// just backfill the column so future passes can version-check it.
+  backfillRenderedAt,
+
+  /// Local copy is already at least as new as the remote row.
+  skip,
+}
+
+/// Pure decision logic for one article, given the matching local row (or
+/// null if never seen before). Kept separate from I/O so it's directly
+/// unit-testable without a database or network.
+ArticleSyncAction decideArticleSyncAction({
+  required RemoteArticleRow remote,
+  required LocalArticle? local,
+}) {
+  if (local == null) {
+    return remote.storagePath == null ? ArticleSyncAction.insertPaywalled : ArticleSyncAction.download;
+  }
+
+  final localRenderedAt = local.renderedAt;
+  if (localRenderedAt != null) {
+    // Defensive: the backend always sets rendered_at on a ready article,
+    // so remote.renderedAt should never be null here in practice. If it
+    // somehow is, there's nothing newer to act on — skip rather than risk
+    // redownloading on every pass.
+    final remoteRenderedAt = remote.renderedAt;
+    final remoteIsNewer =
+        remoteRenderedAt != null && DateTime.parse(remoteRenderedAt).isAfter(DateTime.parse(localRenderedAt));
+    if (!remoteIsNewer) return ArticleSyncAction.skip;
+    return remote.storagePath == null ? ArticleSyncAction.insertPaywalled : ArticleSyncAction.download;
+  }
+
+  // local.renderedAt == null: a pre-migration row.
+  if (local.localPath != null && remote.storagePath != null) {
+    return ArticleSyncAction.backfillRenderedAt;
+  }
+  // Otherwise: still paywalled pre-migration (no reliable version to
+  // compare, but nothing downloaded to lose either — fall through and
+  // treat like new), or the existing paywall→full upgrade case.
+  return remote.storagePath == null ? ArticleSyncAction.insertPaywalled : ArticleSyncAction.download;
+}
+
+Future<List<Map<String, dynamic>>> _defaultFetchReadyArticles({String? since}) async {
+  // RLS on `articles` already scopes this to feeds the current user is
+  // subscribed to — see supabase/migrations/0001_init.sql.
+  var query = AppSupabase.client
+      .from('articles')
+      .select('id, feed_id, title, byline, summary, published_at, rendered_at, storage_path')
+      .eq('status', 'ready');
+  if (since != null) query = query.gt('rendered_at', since);
+  final rows = await query;
+  return (rows as List).cast<Map<String, dynamic>>();
+}
+
+Future<Uint8List> _defaultDownloadArticleZip(String storagePath) {
+  return AppSupabase.client.storage.from('articles').download(storagePath);
+}
+
 /// Pulls down anything the backend worker has rendered for this user's
 /// subscribed feeds: refreshes local feed metadata, then downloads and
-/// unzips any newly-`ready` articles this device doesn't have yet.
+/// unzips any newly-`ready` or newly-re-rendered articles this device
+/// doesn't already have the latest copy of.
 ///
 /// This is deliberately lightweight (a Postgres query + a few file
 /// downloads) — no rendering happens on-device, which is the whole reason
 /// the cloud pipeline exists in the first place. Safe to call from a
 /// background fetch callback under OS time limits.
 class SyncService {
-  const SyncService(this.db);
+  const SyncService(
+    this.db, {
+    this.fetchReadyArticles = _defaultFetchReadyArticles,
+    this.downloadArticleZip = _defaultDownloadArticleZip,
+  });
 
   final AppDatabase db;
+  final Future<List<Map<String, dynamic>>> Function({String? since}) fetchReadyArticles;
+  final Future<Uint8List> Function(String storagePath) downloadArticleZip;
 
   Future<void> syncNow() async {
     final userId = AppSupabase.client.auth.currentUser?.id;
     if (userId == null) return;
 
     await _syncFeeds(userId);
-    await _syncArticles();
+    await syncArticles();
   }
 
   Future<void> _syncFeeds(String userId) async {
@@ -48,66 +149,102 @@ class SyncService {
     }
   }
 
-  Future<void> _syncArticles() async {
-    // RLS on `articles` already scopes this to feeds the current user is
-    // subscribed to — see supabase/migrations/0001_init.sql.
-    final rows = await AppSupabase.client.from('articles').select().eq('status', 'ready');
+  /// Fetches and applies newly-`ready`/newly-re-rendered articles. Public
+  /// (rather than the `_syncFeeds`-style private convention) so it's
+  /// directly callable from tests without also exercising `_syncFeeds`'s
+  /// live Supabase call — see `sync_service_test.dart`.
+  Future<void> syncArticles() async {
+    final watermarkRow =
+        await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+    final since = watermarkRow?.articlesRenderedThrough;
 
-    for (final row in rows as List) {
-      final article = row as Map<String, dynamic>;
-      final id = article['id'] as String;
-      final storagePath = article['storage_path'] as String?;
+    final rawRows = await fetchReadyArticles(since: since);
+    final rows = rawRows.map(RemoteArticleRow.fromRow).toList();
 
-      final alreadyDownloaded = await (db.select(db.localArticles)..where((a) => a.id.equals(id)))
+    // Newest rendered_at observed this pass — becomes the new watermark,
+    // but only once every row below has been handled without throwing. No
+    // per-article error isolation exists yet (separate, deliberately
+    // deferred TODO item), so if any row throws, the watermark must NOT
+    // advance: the next pass re-fetches the same `since` window and
+    // retries. That's safe and cheap, since already-handled rows in that
+    // window will just hit ArticleSyncAction.skip again on retry — don't
+    // "optimize" this into per-row watermark advancement.
+    String? newWatermark = since;
+
+    for (final remote in rows) {
+      final local = await (db.select(db.localArticles)..where((a) => a.id.equals(remote.id)))
           .getSingleOrNull();
-      // A summary-only row (from a previous paywalled sync) should still be
-      // upgraded to a full download if the backend later renders it — see
-      // TODO.md's "no re-download path when re-rendered" gap.
-      final needsUpgradeToFullDownload = alreadyDownloaded?.localPath == null && storagePath != null;
-      if (alreadyDownloaded != null && !needsUpgradeToFullDownload) continue;
 
-      if (storagePath == null) {
-        // Paywalled article — only an RSS summary is available, no
-        // rendered HTML to download.
-        await _insertPaywalledArticle(article);
-      } else {
-        await _downloadAndStore(article, storagePath);
+      switch (decideArticleSyncAction(remote: remote, local: local)) {
+        case ArticleSyncAction.skip:
+          break;
+        case ArticleSyncAction.backfillRenderedAt:
+          await (db.update(db.localArticles)..where((a) => a.id.equals(remote.id)))
+              .write(LocalArticlesCompanion(renderedAt: Value(remote.renderedAt)));
+        case ArticleSyncAction.insertPaywalled:
+          await _insertPaywalledArticle(remote);
+        case ArticleSyncAction.download:
+          await _downloadAndStore(remote);
       }
+
+      final rowRenderedAt = remote.renderedAt;
+      if (rowRenderedAt != null &&
+          (newWatermark == null || DateTime.parse(rowRenderedAt).isAfter(DateTime.parse(newWatermark)))) {
+        newWatermark = rowRenderedAt;
+      }
+    }
+
+    if (newWatermark != since) {
+      // id must be explicit: SQLite's INTEGER PRIMARY KEY rowid-alias
+      // behavior auto-assigns a new rowid whenever the column is omitted
+      // from an INSERT, ignoring the column's SQL-level DEFAULT — so
+      // omitting id here would silently insert a new row every sync pass
+      // instead of upserting the singleton row this table reads (id=0).
+      await db.into(db.syncState).insertOnConflictUpdate(
+            SyncStateCompanion.insert(id: const Value(0), articlesRenderedThrough: Value(newWatermark)),
+          );
     }
   }
 
-  Future<void> _insertPaywalledArticle(Map<String, dynamic> article) async {
+  Future<void> _insertPaywalledArticle(RemoteArticleRow article) async {
     await db.into(db.localArticles).insertOnConflictUpdate(
           LocalArticlesCompanion.insert(
-            id: article['id'] as String,
-            feedId: article['feed_id'] as String,
-            title: article['title'] as String? ?? '(untitled)',
-            byline: Value(article['byline'] as String?),
-            publishedAt: Value(_parseTimestamp(article['published_at'] as String?)),
+            id: article.id,
+            feedId: article.feedId,
+            title: article.title ?? '(untitled)',
+            byline: Value(article.byline),
+            publishedAt: Value(_parseTimestamp(article.publishedAt)),
             downloadedAt: DateTime.now(),
-            summary: Value(article['summary'] as String?),
+            summary: Value(article.summary),
+            renderedAt: Value(article.renderedAt),
           ),
         );
   }
 
-  Future<void> _downloadAndStore(Map<String, dynamic> article, String storagePath) async {
-    final id = article['id'] as String;
-    final bytes = await AppSupabase.client.storage.from('articles').download(storagePath);
+  Future<void> _downloadAndStore(RemoteArticleRow article) async {
+    final id = article.id;
+    final bytes = await downloadArticleZip(article.storagePath!);
 
     final docsDir = await getApplicationDocumentsDirectory();
     final articleDir = Directory(p.join(docsDir.path, 'articles', id));
+    if (await articleDir.exists()) {
+      // Clear out a previous render's files first so a re-render with
+      // fewer images than the old one doesn't leave orphaned stale files.
+      await articleDir.delete(recursive: true);
+    }
     await articleDir.create(recursive: true);
     await _unzipInto(bytes, articleDir);
 
     await db.into(db.localArticles).insertOnConflictUpdate(
           LocalArticlesCompanion.insert(
             id: id,
-            feedId: article['feed_id'] as String,
-            title: article['title'] as String? ?? '(untitled)',
-            byline: Value(article['byline'] as String?),
-            publishedAt: Value(_parseTimestamp(article['published_at'] as String?)),
+            feedId: article.feedId,
+            title: article.title ?? '(untitled)',
+            byline: Value(article.byline),
+            publishedAt: Value(_parseTimestamp(article.publishedAt)),
             downloadedAt: DateTime.now(),
             localPath: Value(p.join('articles', id)),
+            renderedAt: Value(article.renderedAt),
           ),
         );
   }

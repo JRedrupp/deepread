@@ -17,6 +17,10 @@ Future<void> resetLocalData({
   await db.transaction(() async {
     await db.delete(db.localArticles).go();
     await db.delete(db.localFeeds).go();
+    // Must be cleared too: leaving the sync watermark behind would make
+    // the next sync (for this or a different account) only fetch articles
+    // rendered after that stale point, silently missing everything older.
+    await db.delete(db.syncState).go();
   });
 
   if (await articlesDir.exists()) {
