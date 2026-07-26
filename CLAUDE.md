@@ -113,6 +113,23 @@ workaround — follow it for any new screen backed by a `.watch()` query — is 
 an injectable `Stream` parameter that defaults to the live query, so widget tests can pass
 `Stream.value(...)` instead of touching drift. See `FeedListScreen` for the pattern.
 
+## Branching & releases
+
+Gitflow: `develop` is the default branch and integration point for everyday work; `main` only
+moves via `release/*` or `hotfix/*` merges and always reflects what's actually deployed.
+
+- **`feature/*`** — branch from `develop`, PR back into `develop`.
+- **`release/X.Y.Z`** — branch from `develop` when cutting a release; PR into `main`. Merging that
+  PR triggers `.github/workflows/release.yml`, which tags `vX.Y.Z` (version taken from the branch
+  name), publishes a GitHub Release, runs `flyctl deploy --app deepread-worker`, builds and
+  attaches a `flutter build apk --release` artifact (still debug-signed — see TODO.md), and opens
+  an automated `main` → `develop` sync PR.
+- **`hotfix/X.Y.Z`** — same as `release/*` but branched from `main` for urgent fixes; goes through
+  the same workflow and back-merge.
+- `.github/workflows/ci.yml` runs backend `pytest` and mobile `flutter analyze`/`flutter test` on
+  every PR into `develop` or `main`, and both branches require it to pass (no required review
+  count — solo-maintainer repo, and GitHub disallows self-approval anyway).
+
 ## Supabase (`supabase/migrations/`)
 
 Plain SQL migrations applied in order, no CLI migration tooling wired up — see

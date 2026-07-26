@@ -40,10 +40,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 
 ## Tooling
 
-- [ ] Set up CI (backend `pytest` + mobile `flutter test`/`flutter analyze` on every PR) — no CI is currently wired up; tests only run locally.
-- [ ] Auto-deploy the backend worker to Fly.io on merge to `main` — currently `make backend-deploy` (`flyctl deploy --app deepread-worker`) is run manually; needs a GitHub Actions workflow authenticated against the `deepread` Fly org (`FLY_API_TOKEN` secret) that runs it on push to `main`.
-- [ ] Auto-apply Supabase migrations on merge to `main` — `supabase/migrations/` is currently pasted into the SQL Editor by hand per `supabase/README.md`; needs either the Supabase CLI migration workflow wired into GitHub Actions, or some other automated apply step, so new `NNNN_description.sql` files run without a manual paste.
-- [ ] Auto-deploy the mobile apps on merge to `main` (eventually) — Play Store (and later App Store) release builds are currently manual (`make mobile-build`/`mobile-install` are dev-only); needs a release pipeline (e.g. Fastlane or GitHub Actions) once the Play Store launch item under Release is done and there's an actual release track to publish to.
+- [ ] Auto-apply Supabase migrations on release — `supabase/migrations/` is still pasted into the SQL Editor by hand per `supabase/README.md`. Would hook into `.github/workflows/release.yml` alongside the backend deploy step, but needs the Supabase CLI project link set up first (not present in this repo yet).
 
 ## Business
 
