@@ -29,6 +29,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 - [ ] "Last synced" timestamp shown in the UI (e.g. next to the sync button in `FeedListScreen`) — currently sync happens with no visible indication of when it last ran or succeeded.
 - [ ] Settings page — a home for sign-out (currently just an app bar icon), last-synced info, and future preferences (theme, retention, etc.) rather than piling everything into the feed list app bar.
 - [ ] Link to the app's GitHub repo somewhere in the app (e.g. settings page once it exists).
+- [ ] Audio Reader - can we make use of iOS and Android native TTS
 - [ ] Link to the original article's live URL from the reader screen, so the user can open it in a real browser when online (useful when the offline render is imperfect, e.g. the Readability edge cases noted in TECH_DEBT.md).
 
 ## Bugs
