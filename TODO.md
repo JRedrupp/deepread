@@ -22,6 +22,12 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 - [ ] Full-text search across downloaded articles (SQLite FTS5)
 - [ ] Desktop platform support (Linux/macOS/Windows) — MVP is Android + iOS only
 - [ ] Cross-device sync of read/starred state — currently local-only per device
+- [ ] User-settable feed names. Feeds currently show their raw URL as the display name (`feed.title ?? feed.url` in `FeedListScreen`, and `feeds.title` is never actually populated server-side) — let the user rename a feed to something readable.
+- [ ] Delete/unsubscribe a feed. There's currently no way to remove a feed once added — needs a delete on `user_feed_subscriptions` (and probably a local cleanup of downloaded articles for that feed too).
+- [ ] "Last synced" timestamp shown in the UI (e.g. next to the sync button in `FeedListScreen`) — currently sync happens with no visible indication of when it last ran or succeeded.
+- [ ] Settings page — a home for sign-out (currently just an app bar icon), last-synced info, and future preferences (theme, retention, etc.) rather than piling everything into the feed list app bar.
+- [ ] Link to the app's GitHub repo somewhere in the app (e.g. settings page once it exists).
+- [ ] Link to the original article's live URL from the reader screen, so the user can open it in a real browser when online (useful when the offline render is imperfect, e.g. the Readability edge cases noted in TECH_DEBT.md).
 
 ## Storage & scaling
 
@@ -38,3 +44,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 
 - [ ] **Legal review of the shared-caching model before any real public launch.** The MVP includes paywall-avoidance, robots.txt respect, and a takedown-request flow as mitigations, but these reduce risk — they don't substitute for actual legal review once this has real users.
 - [ ] Register a DMCA agent (US Copyright Office, ~$6 one-time) before public launch, to become eligible for safe-harbor protection.
+
+## Release
+
+- [ ] **Launch on the Play Store.** Depends on the legal review above (Play Store's own content/data-safety review will also surface the shared-caching model) — plus the usual store-listing work: screenshots, privacy policy URL, data safety questionnaire, content rating, and a closed testing track before production.
