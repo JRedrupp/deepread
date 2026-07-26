@@ -334,9 +334,20 @@ class $LocalArticlesTable extends LocalArticles
   late final GeneratedColumn<String> localPath = GeneratedColumn<String>(
     'local_path',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _summaryMeta = const VerificationMeta(
+    'summary',
+  );
+  @override
+  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
+    'summary',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _isReadMeta = const VerificationMeta('isRead');
   @override
@@ -360,6 +371,7 @@ class $LocalArticlesTable extends LocalArticles
     publishedAt,
     downloadedAt,
     localPath,
+    summary,
     isRead,
   ];
   @override
@@ -426,8 +438,12 @@ class $LocalArticlesTable extends LocalArticles
         _localPathMeta,
         localPath.isAcceptableOrUnknown(data['local_path']!, _localPathMeta),
       );
-    } else if (isInserting) {
-      context.missing(_localPathMeta);
+    }
+    if (data.containsKey('summary')) {
+      context.handle(
+        _summaryMeta,
+        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
+      );
     }
     if (data.containsKey('is_read')) {
       context.handle(
@@ -471,7 +487,11 @@ class $LocalArticlesTable extends LocalArticles
       localPath: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}local_path'],
-      )!,
+      ),
+      summary: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}summary'],
+      ),
       isRead: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_read'],
@@ -494,8 +514,13 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
   final DateTime downloadedAt;
 
   /// Path (relative to app documents dir) to the unzipped folder
-  /// containing index.html + images for this article.
-  final String localPath;
+  /// containing index.html + images for this article. Null means this
+  /// article is paywalled — no offline HTML was rendered, only [summary].
+  final String? localPath;
+
+  /// RSS-provided summary, used as the only offline-readable content for
+  /// paywalled articles (where [localPath] is null).
+  final String? summary;
   final bool isRead;
   const LocalArticle({
     required this.id,
@@ -504,7 +529,8 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
     this.byline,
     this.publishedAt,
     required this.downloadedAt,
-    required this.localPath,
+    this.localPath,
+    this.summary,
     required this.isRead,
   });
   @override
@@ -520,7 +546,12 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
       map['published_at'] = Variable<DateTime>(publishedAt);
     }
     map['downloaded_at'] = Variable<DateTime>(downloadedAt);
-    map['local_path'] = Variable<String>(localPath);
+    if (!nullToAbsent || localPath != null) {
+      map['local_path'] = Variable<String>(localPath);
+    }
+    if (!nullToAbsent || summary != null) {
+      map['summary'] = Variable<String>(summary);
+    }
     map['is_read'] = Variable<bool>(isRead);
     return map;
   }
@@ -537,7 +568,12 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
           ? const Value.absent()
           : Value(publishedAt),
       downloadedAt: Value(downloadedAt),
-      localPath: Value(localPath),
+      localPath: localPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localPath),
+      summary: summary == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summary),
       isRead: Value(isRead),
     );
   }
@@ -554,7 +590,8 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
       byline: serializer.fromJson<String?>(json['byline']),
       publishedAt: serializer.fromJson<DateTime?>(json['publishedAt']),
       downloadedAt: serializer.fromJson<DateTime>(json['downloadedAt']),
-      localPath: serializer.fromJson<String>(json['localPath']),
+      localPath: serializer.fromJson<String?>(json['localPath']),
+      summary: serializer.fromJson<String?>(json['summary']),
       isRead: serializer.fromJson<bool>(json['isRead']),
     );
   }
@@ -568,7 +605,8 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
       'byline': serializer.toJson<String?>(byline),
       'publishedAt': serializer.toJson<DateTime?>(publishedAt),
       'downloadedAt': serializer.toJson<DateTime>(downloadedAt),
-      'localPath': serializer.toJson<String>(localPath),
+      'localPath': serializer.toJson<String?>(localPath),
+      'summary': serializer.toJson<String?>(summary),
       'isRead': serializer.toJson<bool>(isRead),
     };
   }
@@ -580,7 +618,8 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
     Value<String?> byline = const Value.absent(),
     Value<DateTime?> publishedAt = const Value.absent(),
     DateTime? downloadedAt,
-    String? localPath,
+    Value<String?> localPath = const Value.absent(),
+    Value<String?> summary = const Value.absent(),
     bool? isRead,
   }) => LocalArticle(
     id: id ?? this.id,
@@ -589,7 +628,8 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
     byline: byline.present ? byline.value : this.byline,
     publishedAt: publishedAt.present ? publishedAt.value : this.publishedAt,
     downloadedAt: downloadedAt ?? this.downloadedAt,
-    localPath: localPath ?? this.localPath,
+    localPath: localPath.present ? localPath.value : this.localPath,
+    summary: summary.present ? summary.value : this.summary,
     isRead: isRead ?? this.isRead,
   );
   LocalArticle copyWithCompanion(LocalArticlesCompanion data) {
@@ -605,6 +645,7 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
           ? data.downloadedAt.value
           : this.downloadedAt,
       localPath: data.localPath.present ? data.localPath.value : this.localPath,
+      summary: data.summary.present ? data.summary.value : this.summary,
       isRead: data.isRead.present ? data.isRead.value : this.isRead,
     );
   }
@@ -619,6 +660,7 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
           ..write('publishedAt: $publishedAt, ')
           ..write('downloadedAt: $downloadedAt, ')
           ..write('localPath: $localPath, ')
+          ..write('summary: $summary, ')
           ..write('isRead: $isRead')
           ..write(')'))
         .toString();
@@ -633,6 +675,7 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
     publishedAt,
     downloadedAt,
     localPath,
+    summary,
     isRead,
   );
   @override
@@ -646,6 +689,7 @@ class LocalArticle extends DataClass implements Insertable<LocalArticle> {
           other.publishedAt == this.publishedAt &&
           other.downloadedAt == this.downloadedAt &&
           other.localPath == this.localPath &&
+          other.summary == this.summary &&
           other.isRead == this.isRead);
 }
 
@@ -656,7 +700,8 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
   final Value<String?> byline;
   final Value<DateTime?> publishedAt;
   final Value<DateTime> downloadedAt;
-  final Value<String> localPath;
+  final Value<String?> localPath;
+  final Value<String?> summary;
   final Value<bool> isRead;
   final Value<int> rowid;
   const LocalArticlesCompanion({
@@ -667,6 +712,7 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
     this.publishedAt = const Value.absent(),
     this.downloadedAt = const Value.absent(),
     this.localPath = const Value.absent(),
+    this.summary = const Value.absent(),
     this.isRead = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -677,14 +723,14 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
     this.byline = const Value.absent(),
     this.publishedAt = const Value.absent(),
     required DateTime downloadedAt,
-    required String localPath,
+    this.localPath = const Value.absent(),
+    this.summary = const Value.absent(),
     this.isRead = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        feedId = Value(feedId),
        title = Value(title),
-       downloadedAt = Value(downloadedAt),
-       localPath = Value(localPath);
+       downloadedAt = Value(downloadedAt);
   static Insertable<LocalArticle> custom({
     Expression<String>? id,
     Expression<String>? feedId,
@@ -693,6 +739,7 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
     Expression<DateTime>? publishedAt,
     Expression<DateTime>? downloadedAt,
     Expression<String>? localPath,
+    Expression<String>? summary,
     Expression<bool>? isRead,
     Expression<int>? rowid,
   }) {
@@ -704,6 +751,7 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
       if (publishedAt != null) 'published_at': publishedAt,
       if (downloadedAt != null) 'downloaded_at': downloadedAt,
       if (localPath != null) 'local_path': localPath,
+      if (summary != null) 'summary': summary,
       if (isRead != null) 'is_read': isRead,
       if (rowid != null) 'rowid': rowid,
     });
@@ -716,7 +764,8 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
     Value<String?>? byline,
     Value<DateTime?>? publishedAt,
     Value<DateTime>? downloadedAt,
-    Value<String>? localPath,
+    Value<String?>? localPath,
+    Value<String?>? summary,
     Value<bool>? isRead,
     Value<int>? rowid,
   }) {
@@ -728,6 +777,7 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
       publishedAt: publishedAt ?? this.publishedAt,
       downloadedAt: downloadedAt ?? this.downloadedAt,
       localPath: localPath ?? this.localPath,
+      summary: summary ?? this.summary,
       isRead: isRead ?? this.isRead,
       rowid: rowid ?? this.rowid,
     );
@@ -757,6 +807,9 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
     if (localPath.present) {
       map['local_path'] = Variable<String>(localPath.value);
     }
+    if (summary.present) {
+      map['summary'] = Variable<String>(summary.value);
+    }
     if (isRead.present) {
       map['is_read'] = Variable<bool>(isRead.value);
     }
@@ -776,6 +829,7 @@ class LocalArticlesCompanion extends UpdateCompanion<LocalArticle> {
           ..write('publishedAt: $publishedAt, ')
           ..write('downloadedAt: $downloadedAt, ')
           ..write('localPath: $localPath, ')
+          ..write('summary: $summary, ')
           ..write('isRead: $isRead, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -1071,7 +1125,8 @@ typedef $$LocalArticlesTableCreateCompanionBuilder =
       Value<String?> byline,
       Value<DateTime?> publishedAt,
       required DateTime downloadedAt,
-      required String localPath,
+      Value<String?> localPath,
+      Value<String?> summary,
       Value<bool> isRead,
       Value<int> rowid,
     });
@@ -1083,7 +1138,8 @@ typedef $$LocalArticlesTableUpdateCompanionBuilder =
       Value<String?> byline,
       Value<DateTime?> publishedAt,
       Value<DateTime> downloadedAt,
-      Value<String> localPath,
+      Value<String?> localPath,
+      Value<String?> summary,
       Value<bool> isRead,
       Value<int> rowid,
     });
@@ -1150,6 +1206,11 @@ class $$LocalArticlesTableFilterComposer
 
   ColumnFilters<String> get localPath => $composableBuilder(
     column: $table.localPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get summary => $composableBuilder(
+    column: $table.summary,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1221,6 +1282,11 @@ class $$LocalArticlesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get summary => $composableBuilder(
+    column: $table.summary,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isRead => $composableBuilder(
     column: $table.isRead,
     builder: (column) => ColumnOrderings(column),
@@ -1280,6 +1346,9 @@ class $$LocalArticlesTableAnnotationComposer
 
   GeneratedColumn<String> get localPath =>
       $composableBuilder(column: $table.localPath, builder: (column) => column);
+
+  GeneratedColumn<String> get summary =>
+      $composableBuilder(column: $table.summary, builder: (column) => column);
 
   GeneratedColumn<bool> get isRead =>
       $composableBuilder(column: $table.isRead, builder: (column) => column);
@@ -1342,7 +1411,8 @@ class $$LocalArticlesTableTableManager
                 Value<String?> byline = const Value.absent(),
                 Value<DateTime?> publishedAt = const Value.absent(),
                 Value<DateTime> downloadedAt = const Value.absent(),
-                Value<String> localPath = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<String?> summary = const Value.absent(),
                 Value<bool> isRead = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LocalArticlesCompanion(
@@ -1353,6 +1423,7 @@ class $$LocalArticlesTableTableManager
                 publishedAt: publishedAt,
                 downloadedAt: downloadedAt,
                 localPath: localPath,
+                summary: summary,
                 isRead: isRead,
                 rowid: rowid,
               ),
@@ -1364,7 +1435,8 @@ class $$LocalArticlesTableTableManager
                 Value<String?> byline = const Value.absent(),
                 Value<DateTime?> publishedAt = const Value.absent(),
                 required DateTime downloadedAt,
-                required String localPath,
+                Value<String?> localPath = const Value.absent(),
+                Value<String?> summary = const Value.absent(),
                 Value<bool> isRead = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LocalArticlesCompanion.insert(
@@ -1375,6 +1447,7 @@ class $$LocalArticlesTableTableManager
                 publishedAt: publishedAt,
                 downloadedAt: downloadedAt,
                 localPath: localPath,
+                summary: summary,
                 isRead: isRead,
                 rowid: rowid,
               ),

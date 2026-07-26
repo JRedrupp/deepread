@@ -31,8 +31,13 @@ class LocalArticles extends Table {
   DateTimeColumn get downloadedAt => dateTime()();
 
   /// Path (relative to app documents dir) to the unzipped folder
-  /// containing index.html + images for this article.
-  TextColumn get localPath => text()();
+  /// containing index.html + images for this article. Null means this
+  /// article is paywalled — no offline HTML was rendered, only [summary].
+  TextColumn get localPath => text().nullable()();
+
+  /// RSS-provided summary, used as the only offline-readable content for
+  /// paywalled articles (where [localPath] is null).
+  TextColumn get summary => text().nullable()();
 
   BoolColumn get isRead => boolean().withDefault(const Constant(false))();
 
@@ -46,7 +51,22 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            // localPath became nullable and summary was added; SQLite can't
+            // drop a NOT NULL constraint in place, and this is a rebuildable
+            // offline cache, so just recreate the table and let the next
+            // sync repopulate it.
+            await m.deleteTable(localArticles.actualTableName);
+            await m.createTable(localArticles);
+          }
+        },
+      );
 }
 
 LazyDatabase _openConnection() {
