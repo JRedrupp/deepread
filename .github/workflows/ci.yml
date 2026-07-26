@@ -46,5 +46,6 @@ jobs:
           path: mobile/.dart_tool
           key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
       - run: flutter pub get
+      - run: dart run build_runner build
       - run: flutter analyze
       - run: flutter test
