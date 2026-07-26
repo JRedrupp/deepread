@@ -27,6 +27,8 @@ URL + keys first.
 make backend-venv   # one-time: creates backend/.venv, installs deps + chromium
 make backend-test   # cd backend && . .venv/bin/activate && python -m pytest
 make backend-run    # runs the poller/renderer worker locally
+make backend-render-url URL=<url>  # render one real URL through the pipeline, no Supabase needed —
+                                    # for debugging site-specific render failures locally
 
 make mobile-test        # cd mobile && flutter test
 make mobile-analyze     # cd mobile && flutter analyze

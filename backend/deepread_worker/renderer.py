@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "deepread-renderer/0.1 (+https://github.com/deepread; offline reading cache)"
 
 with open(__file__.rsplit("/", 1)[0] + "/vendor/Readability.js", encoding="utf-8") as f:
-    _READABILITY_JS = f.read()
+    # Explicit `window.Readability = Readability` because a top-level `class`
+    # declaration injected via add_init_script binds to that call's own scope,
+    # not visibly to the realm's global object from a later page.evaluate() —
+    # confirmed empirically (var/class alone silently invisible; explicit
+    # window assignment is not).
+    _READABILITY_JS = f.read() + "\nwindow.Readability = Readability;"
 
 
 async def render_pending_articles(
@@ -111,6 +116,11 @@ async def _render_one(
 async def _render_with_playwright(browser: Browser, url: str) -> dict:
     context = await browser.new_context(user_agent=USER_AGENT)
     page = await context.new_page()
+    # add_init_script injects via CDP before the page's own scripts run, so it
+    # isn't subject to the page's script-src CSP — unlike add_script_tag, which
+    # adds an inline <script> and gets blocked on sites without 'unsafe-inline'
+    # (e.g. GitHub Pages, Discourse). Must be registered before goto().
+    await page.add_init_script(script=_READABILITY_JS)
     try:
         try:
             await page.goto(url, wait_until="networkidle", timeout=15_000)
@@ -122,7 +132,6 @@ async def _render_with_playwright(browser: Browser, url: str) -> dict:
             await page.wait_for_timeout(2_000)
 
         text = await page.inner_text("body")
-        await page.add_script_tag(content=_READABILITY_JS)
         extracted = await page.evaluate(
             """() => {
                 const article = new Readability(document.cloneNode(true)).parse();

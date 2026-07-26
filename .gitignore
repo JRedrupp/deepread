@@ -5,6 +5,7 @@ backend/**/__pycache__/
 backend/*.egg-info/
 backend/.pytest_cache/
 backend/.ruff_cache/
+backend/render-output/
 .env
 
 # OS / editor

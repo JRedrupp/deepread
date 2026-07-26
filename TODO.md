@@ -31,10 +31,6 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 - [ ] Audio Reader - can we make use of iOS and Android native TTS
 - [ ] Link to the original article's live URL from the reader screen, so the user can open it in a real browser when online (useful when the offline render is imperfect, e.g. the Readability edge cases noted in TECH_DEBT.md).
 
-## Bugs
-
-- [ ] **Renderer fails on pages with a strict script-src CSP (e.g. GitHub repo pages, Discourse forums).** `_render_with_playwright` (`backend/deepread_worker/renderer.py:125`) injects Readability via `page.add_script_tag(content=_READABILITY_JS)`, which adds an inline `<script>`. Sites whose CSP `script-src` doesn't allow `'unsafe-inline'` block it, so `add_script_tag` raises and the article fails to render. Seen on `https://github.com/mulfyx/w4me-station` (`script-src github.githubassets.com`) and `https://discuss.grapheneos.org/d/40700-...` (Discourse's hashed/allowlisted `script-src`). Needs a CSP-safe injection method, e.g. `page.add_init_script` before navigation, or evaluating Readability via `page.evaluate` with the script content passed as a function argument instead of an injected `<script>` tag.
-
 ## Storage & scaling
 
 - [ ] Automated retention policy (auto-expire read articles, or cap articles per feed) — MVP keeps everything until manually deleted

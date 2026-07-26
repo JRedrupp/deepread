@@ -4,7 +4,7 @@ export
 DART_DEFINES = --dart-define=SUPABASE_URL=$(SUPABASE_URL) --dart-define=SUPABASE_PUBLISHABLE_KEY=$(SUPABASE_PUBLISHABLE_KEY)
 APK = mobile/build/app/outputs/flutter-apk/app-debug.apk
 
-.PHONY: help check-env mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-deploy backend-logs
+.PHONY: help check-env mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-render-url backend-deploy backend-logs
 
 help:
 	@echo "make mobile-run       - flutter run on a connected device (DEVICE=<id> to target one)"
@@ -15,6 +15,7 @@ help:
 	@echo "make backend-venv     - create backend/.venv and install deps + chromium"
 	@echo "make backend-run      - run the poller/renderer worker locally"
 	@echo "make backend-test     - run backend pytest suite"
+	@echo "make backend-render-url URL=<url> - render one real URL through the pipeline, no Supabase needed"
 	@echo "make backend-deploy   - flyctl deploy the worker to Fly.io (deepread-worker app)"
 	@echo "make backend-logs     - tail production logs from Fly.io"
 
@@ -50,6 +51,9 @@ backend-run:
 
 backend-test:
 	cd backend && . .venv/bin/activate && python -m pytest
+
+backend-render-url:
+	cd backend && . .venv/bin/activate && python -m deepread_worker.debug_render $(URL)
 
 # Requires flyctl (https://fly.io/install.sh) authenticated against the
 # "deepread" org — secrets (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) are
