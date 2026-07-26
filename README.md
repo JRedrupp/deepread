@@ -49,3 +49,14 @@ flutter run --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_PUBLISHABLE_KE
 ## Supabase setup
 
 Apply `supabase/migrations/` in order (paste into the dashboard's SQL Editor, or use the CLI) — see `supabase/README.md` for details.
+
+## Backend deployment
+
+The worker runs on Fly.io as app `deepread-worker` (org `deepread`), configured via `backend/fly.toml` — no HTTP service is exposed since it's a pure background poller/renderer. Fly's default 2-machine setup gives us a primary + a standby that only takes over on host hardware failure (not for load-balancing), which conveniently means only one instance is ever actively polling/rendering — see the "stuck `rendering` rows" note in TECH_DEBT.md for what that assumption depends on if this ever changes.
+
+```
+make backend-deploy   # flyctl deploy --app deepread-worker
+make backend-logs     # tail production logs
+```
+
+Secrets (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) are already set on the app via `flyctl secrets set`; update them with the same command if they ever change (e.g. after a key rotation).

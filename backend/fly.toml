@@ -1,0 +1,11 @@
+app = "deepread-worker"
+primary_region = "lhr"
+
+[build]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory_mb = 1024
+
+[processes]
+  app = "python -m deepread_worker.main"
