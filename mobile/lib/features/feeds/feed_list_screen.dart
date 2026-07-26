@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../data/local/database.dart';
 import '../../data/remote/feed_repository.dart';
 import '../../data/remote/supabase_client.dart';
 import '../articles/article_list_screen.dart';
+import '../auth/local_data_reset.dart';
 import '../sync/sync_service.dart';
 import 'add_feed_screen.dart';
 
@@ -38,12 +42,15 @@ class _FeedListScreenState extends State<FeedListScreen> {
   }
 
   bool _syncing = false;
+  Future<void>? _syncFuture;
 
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() => _syncing = true);
+    final future = SyncService(widget.db).syncNow();
+    _syncFuture = future;
     try {
-      await SyncService(widget.db).syncNow();
+      await future;
     } catch (e) {
       // Sync failures (offline, expired session, Supabase unreachable)
       // shouldn't crash the screen — the user can already see and read
@@ -56,6 +63,35 @@ class _FeedListScreenState extends State<FeedListScreen> {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  Future<void> _signOut() async {
+    final db = widget.db; // capture before any await — this widget may be
+    // disposed once AuthGate reacts to the `signedOut` auth event.
+
+    try {
+      // signOut() fires the `signedOut` event (and AuthGate's navigation
+      // to LoginScreen) essentially synchronously with the local session
+      // removal, before its best-effort server-side token revoke. Swallow
+      // failures here (e.g. offline revoke) — they must not block the
+      // local wipe below.
+      await AppSupabase.client.auth.signOut();
+    } catch (_) {}
+
+    // Drain any sync already in flight (the app-open sync from initState,
+    // or one launched by _addFeed) before wiping — syncNow() only checks
+    // currentUser once at its start, so signOut() above prevents *new*
+    // syncs but can't stop one already past that check. It will likely
+    // start throwing (401s) once the token's gone — irrelevant, swallowed.
+    try {
+      await _syncFuture;
+    } catch (_) {}
+
+    final docsDir = await getApplicationDocumentsDirectory();
+    await resetLocalData(
+      db: db,
+      articlesDir: Directory(p.join(docsDir.path, 'articles')),
+    );
   }
 
   @override
@@ -78,7 +114,7 @@ class _FeedListScreenState extends State<FeedListScreen> {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign out',
-            onPressed: () => AppSupabase.client.auth.signOut(),
+            onPressed: _signOut,
           ),
         ],
       ),
@@ -126,6 +162,6 @@ class _FeedListScreenState extends State<FeedListScreen> {
     // Pull immediately rather than waiting for the next periodic
     // background sync, so the feed's title (and any already-rendered
     // articles) show up right away.
-    unawaited(SyncService(widget.db).syncNow());
+    unawaited(_syncNow());
   }
 }
