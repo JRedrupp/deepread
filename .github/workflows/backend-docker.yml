@@ -1,0 +1,15 @@
+name: Backend Docker build
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "backend/Dockerfile"
+      - "backend/pyproject.toml"
+
+jobs:
+  backend-docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f backend/Dockerfile backend
