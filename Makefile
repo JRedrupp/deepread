@@ -4,9 +4,10 @@ export
 DART_DEFINES = --dart-define=SUPABASE_URL=$(SUPABASE_URL) --dart-define=SUPABASE_PUBLISHABLE_KEY=$(SUPABASE_PUBLISHABLE_KEY)
 APK = mobile/build/app/outputs/flutter-apk/app-debug.apk
 
-.PHONY: help check-env mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-render-url backend-deploy backend-logs
+.PHONY: help check-env mobile-generate mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-render-url backend-deploy backend-logs
 
 help:
+	@echo "make mobile-generate  - regenerate build_runner code (drift, etc.), gitignored"
 	@echo "make mobile-run       - flutter run on a connected device (DEVICE=<id> to target one)"
 	@echo "make mobile-build     - flutter build apk --debug, with Supabase dart-defines"
 	@echo "make mobile-install   - build + adb install -r onto a connected device (DEVICE=<id>)"
@@ -28,19 +29,22 @@ check-env:
 		exit 1; \
 	fi
 
-mobile-run: check-env
+mobile-generate:
+	cd mobile && dart run build_runner build
+
+mobile-run: check-env mobile-generate
 	cd mobile && flutter run $(if $(DEVICE),-d $(DEVICE)) $(DART_DEFINES)
 
-mobile-build: check-env
+mobile-build: check-env mobile-generate
 	cd mobile && flutter build apk --debug $(DART_DEFINES)
 
 mobile-install: mobile-build
 	adb $(if $(DEVICE),-s $(DEVICE)) install -r $(APK)
 
-mobile-analyze:
+mobile-analyze: mobile-generate
 	cd mobile && flutter analyze
 
-mobile-test:
+mobile-test: mobile-generate
 	cd mobile && flutter test
 
 backend-venv:

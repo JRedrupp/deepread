@@ -55,20 +55,39 @@ class SyncService {
 
     for (final row in rows as List) {
       final article = row as Map<String, dynamic>;
-      final storagePath = article['storage_path'] as String?;
-      if (storagePath == null) {
-        // Paywalled article with only an RSS summary — the client doesn't
-        // have anywhere to put that yet. See TODO.md's sync-service entry.
-        continue;
-      }
-
       final id = article['id'] as String;
+      final storagePath = article['storage_path'] as String?;
+
       final alreadyDownloaded = await (db.select(db.localArticles)..where((a) => a.id.equals(id)))
           .getSingleOrNull();
-      if (alreadyDownloaded != null) continue;
+      // A summary-only row (from a previous paywalled sync) should still be
+      // upgraded to a full download if the backend later renders it — see
+      // TODO.md's "no re-download path when re-rendered" gap.
+      final needsUpgradeToFullDownload = alreadyDownloaded?.localPath == null && storagePath != null;
+      if (alreadyDownloaded != null && !needsUpgradeToFullDownload) continue;
 
-      await _downloadAndStore(article, storagePath);
+      if (storagePath == null) {
+        // Paywalled article — only an RSS summary is available, no
+        // rendered HTML to download.
+        await _insertPaywalledArticle(article);
+      } else {
+        await _downloadAndStore(article, storagePath);
+      }
     }
+  }
+
+  Future<void> _insertPaywalledArticle(Map<String, dynamic> article) async {
+    await db.into(db.localArticles).insertOnConflictUpdate(
+          LocalArticlesCompanion.insert(
+            id: article['id'] as String,
+            feedId: article['feed_id'] as String,
+            title: article['title'] as String? ?? '(untitled)',
+            byline: Value(article['byline'] as String?),
+            publishedAt: Value(_parseTimestamp(article['published_at'] as String?)),
+            downloadedAt: DateTime.now(),
+            summary: Value(article['summary'] as String?),
+          ),
+        );
   }
 
   Future<void> _downloadAndStore(Map<String, dynamic> article, String storagePath) async {
@@ -88,7 +107,7 @@ class SyncService {
             byline: Value(article['byline'] as String?),
             publishedAt: Value(_parseTimestamp(article['published_at'] as String?)),
             downloadedAt: DateTime.now(),
-            localPath: p.join('articles', id),
+            localPath: Value(p.join('articles', id)),
           ),
         );
   }
