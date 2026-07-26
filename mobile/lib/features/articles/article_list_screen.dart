@@ -8,10 +8,16 @@ import 'article_reader_screen.dart';
 enum _SortOrder { newestFirst, oldestFirst }
 
 class ArticleListScreen extends StatefulWidget {
-  const ArticleListScreen({super.key, required this.db, required this.feed});
+  const ArticleListScreen({super.key, required this.db, required this.feed, this.articlesStream});
 
   final AppDatabase db;
   final LocalFeed feed;
+
+  /// Overridable so widget tests can supply a plain [Stream] instead of a
+  /// live drift query — drift's reactive query streams don't reliably
+  /// deliver events when subscribed to directly inside a testWidgets
+  /// fake-async zone.
+  final Stream<List<LocalArticle>>? articlesStream;
 
   @override
   State<ArticleListScreen> createState() => _ArticleListScreenState();
@@ -29,9 +35,8 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
     // Unsorted/unfiltered at the query level — sort and filter are applied
     // client-side in the builder below so toggling them doesn't tear down
     // and resubscribe the underlying drift stream.
-    _articlesStream = (widget.db.select(widget.db.localArticles)
-          ..where((a) => a.feedId.equals(widget.feed.id)))
-        .watch();
+    _articlesStream = widget.articlesStream ??
+        (widget.db.select(widget.db.localArticles)..where((a) => a.feedId.equals(widget.feed.id))).watch();
   }
 
   List<LocalArticle> _applySortAndFilter(List<LocalArticle> articles) {
@@ -93,6 +98,8 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
                     children: [
                       if (!article.isRead) const StatusTag('NEW'),
                       if (!article.isRead) const SizedBox(width: 8),
+                      if (article.localPath == null) const StatusTag('SUMMARY ONLY'),
+                      if (article.localPath == null) const SizedBox(width: 8),
                       Text(
                         article.publishedAt?.toIso8601String().split('T').first ?? '',
                         style: AppTheme.metadataStyle(),
