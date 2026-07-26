@@ -1,0 +1,33 @@
+[project]
+name = "deepread-worker"
+version = "0.1.0"
+description = "Feed poller + headless-render worker for deepread"
+requires-python = ">=3.12"
+dependencies = [
+  "playwright>=1.48",
+  "feedparser>=6.0",
+  "httpx>=0.27",
+  "nh3>=0.2",
+  "supabase>=2.9",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["deepread_worker"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100

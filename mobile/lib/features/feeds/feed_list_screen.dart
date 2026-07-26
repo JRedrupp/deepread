@@ -1,0 +1,131 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../../data/local/database.dart';
+import '../../data/remote/feed_repository.dart';
+import '../../data/remote/supabase_client.dart';
+import '../articles/article_list_screen.dart';
+import '../sync/sync_service.dart';
+import 'add_feed_screen.dart';
+
+class FeedListScreen extends StatefulWidget {
+  const FeedListScreen({super.key, required this.db, this.feedsStream});
+
+  final AppDatabase db;
+
+  /// Overridable so widget tests can supply a plain [Stream] instead of a
+  /// live drift query — drift's reactive query streams don't reliably
+  /// deliver events when subscribed to directly inside a testWidgets
+  /// fake-async zone.
+  final Stream<List<LocalFeed>>? feedsStream;
+
+  @override
+  State<FeedListScreen> createState() => _FeedListScreenState();
+}
+
+class _FeedListScreenState extends State<FeedListScreen> {
+  late final Stream<List<LocalFeed>> _feedsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    // Built once here, not in `build`, so a parent rebuild doesn't hand
+    // StreamBuilder a new Stream identity (which would tear down and
+    // resubscribe the underlying drift query on every rebuild).
+    _feedsStream = widget.feedsStream ?? widget.db.select(widget.db.localFeeds).watch();
+    unawaited(_syncNow());
+  }
+
+  bool _syncing = false;
+
+  Future<void> _syncNow() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      await SyncService(widget.db).syncNow();
+    } catch (e) {
+      // Sync failures (offline, expired session, Supabase unreachable)
+      // shouldn't crash the screen — the user can already see and read
+      // whatever was downloaded previously.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sync failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('DeepRead'),
+        actions: [
+          IconButton(
+            icon: _syncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync),
+            tooltip: 'Sync now',
+            onPressed: _syncing ? null : _syncNow,
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign out',
+            onPressed: () => AppSupabase.client.auth.signOut(),
+          ),
+        ],
+      ),
+      body: StreamBuilder<List<LocalFeed>>(
+        stream: _feedsStream,
+        builder: (context, snapshot) {
+          final feeds = snapshot.data ?? const [];
+          if (feeds.isEmpty) {
+            return const Center(child: Text('No feeds yet — add one to get started.'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.all(12),
+            itemCount: feeds.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final feed = feeds[index];
+              return Card(
+                child: ListTile(
+                  title: Text(feed.title ?? feed.url),
+                  subtitle: Text(feed.url, style: Theme.of(context).textTheme.bodySmall),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ArticleListScreen(db: widget.db, feed: feed),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AddFeedScreen(onSubmit: _addFeed),
+          ),
+        ),
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  Future<void> _addFeed(String url) async {
+    await FeedRepository(widget.db).subscribe(url);
+    // Pull immediately rather than waiting for the next periodic
+    // background sync, so the feed's title (and any already-rendered
+    // articles) show up right away.
+    unawaited(SyncService(widget.db).syncNow());
+  }
+}
