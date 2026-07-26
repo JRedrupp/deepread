@@ -191,6 +191,29 @@ void main() {
       expect(requestedSince, '2026-01-01T00:00:00Z');
     });
 
+    test('forceFullFetch ignores an existing watermark, so a newly-subscribed '
+        "feed's older back catalog isn't permanently stranded", () async {
+      await db.into(db.syncState).insertOnConflictUpdate(
+            SyncStateCompanion.insert(
+              id: const Value(0),
+              articlesRenderedThrough: const Value('2026-06-01T00:00:00Z'),
+            ),
+          );
+      String? requestedSince = 'not called';
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async {
+          requestedSince = since;
+          return [];
+        },
+        downloadArticleZip: (_) async => throw StateError('unused'),
+      );
+
+      await service.syncArticles(forceFullFetch: true);
+
+      expect(requestedSince, isNull);
+    });
+
     test('watermark does not advance if a row throws mid-pass', () async {
       final service = SyncService(
         db,

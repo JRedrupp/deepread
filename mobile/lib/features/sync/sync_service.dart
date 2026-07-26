@@ -127,35 +127,57 @@ class SyncService {
     final userId = AppSupabase.client.auth.currentUser?.id;
     if (userId == null) return;
 
-    await _syncFeeds(userId);
-    await syncArticles();
+    final hasNewSubscription = await _syncFeeds(userId);
+    // A newly-subscribed feed's already-rendered back catalog predates the
+    // current watermark (this is a *shared* rendering cache — a feed's
+    // articles can have been rendered long before this user subscribed),
+    // so a plain `.gt('rendered_at', since)` pass would permanently skip
+    // them. Fall back to a full fetch on the pass a new subscription is
+    // detected — the old rows that pass has to re-examine all hit
+    // ArticleSyncAction.skip cheaply, so this is just a network-cost
+    // trade-off, not a correctness one.
+    await syncArticles(forceFullFetch: hasNewSubscription);
   }
 
-  Future<void> _syncFeeds(String userId) async {
+  /// Returns true if any feed in the response wasn't already present
+  /// locally (a new subscription this pass), so [syncNow] can decide
+  /// whether the article watermark is still safe to trust.
+  Future<bool> _syncFeeds(String userId) async {
     final rows = await AppSupabase.client
         .from('user_feed_subscriptions')
         .select('feeds(id, url, title)')
         .eq('user_id', userId);
 
+    final existingIds = (await db.select(db.localFeeds).get()).map((f) => f.id).toSet();
+    var hasNewSubscription = false;
+
     for (final row in rows as List) {
       final feed = row['feeds'] as Map<String, dynamic>;
+      final feedId = feed['id'] as String;
+      if (!existingIds.contains(feedId)) hasNewSubscription = true;
       await db.into(db.localFeeds).insertOnConflictUpdate(
             LocalFeedsCompanion.insert(
-              id: feed['id'] as String,
+              id: feedId,
               url: feed['url'] as String,
               title: Value(feed['title'] as String?),
             ),
           );
     }
+    return hasNewSubscription;
   }
 
   /// Fetches and applies newly-`ready`/newly-re-rendered articles. Public
   /// (rather than the `_syncFeeds`-style private convention) so it's
   /// directly callable from tests without also exercising `_syncFeeds`'s
   /// live Supabase call — see `sync_service_test.dart`.
-  Future<void> syncArticles() async {
-    final watermarkRow =
-        await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+  ///
+  /// [forceFullFetch] ignores the stored watermark for this pass (still
+  /// updating it from whatever's fetched) — see the call site in
+  /// [syncNow] for why a new feed subscription requires this.
+  Future<void> syncArticles({bool forceFullFetch = false}) async {
+    final watermarkRow = forceFullFetch
+        ? null
+        : await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
     final since = watermarkRow?.articlesRenderedThrough;
 
     final rawRows = await fetchReadyArticles(since: since);
