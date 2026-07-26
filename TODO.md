@@ -45,11 +45,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 
 - [ ] **Monetization/billing model — explicitly undecided.** No billing infra exists yet; this needs a product decision before it's designed, not an engineering default.
 
-## Legal (blocking gates before public launch)
-
-- [ ] **Legal review of the shared-caching model before any real public launch.** The MVP includes paywall-avoidance, robots.txt respect, and a takedown-request flow as mitigations, but these reduce risk — they don't substitute for actual legal review once this has real users.
-- [ ] Register a DMCA agent (US Copyright Office, ~$6 one-time) before public launch, to become eligible for safe-harbor protection.
 
 ## Release
 
-- [ ] **Launch on the Play Store.** Depends on the legal review above (Play Store's own content/data-safety review will also surface the shared-caching model) — plus the usual store-listing work: screenshots, privacy policy URL, data safety questionnaire, content rating, and a closed testing track before production.
+- [ ] **Launch on the Play Store.** the usual store-listing work: screenshots, privacy policy URL, data safety questionnaire, content rating, and a closed testing track before production.
