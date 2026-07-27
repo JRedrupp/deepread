@@ -3,6 +3,12 @@ name: CI
 on:
   pull_request:
     branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend-test:
@@ -45,6 +51,8 @@ jobs:
         with:
           path: mobile/.dart_tool
           key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
+          restore-keys: |
+            pub-${{ runner.os }}-
       - run: flutter pub get
       - run: dart run build_runner build
       - run: flutter analyze
