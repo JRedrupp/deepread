@@ -42,10 +42,18 @@ void main() {
     await File(p.join(tempDir.path, 'article-1', 'index.html')).writeAsString('<html></html>');
     await File(p.join(nestedDir.path, 'image.png')).writeAsBytes([0]);
 
+    await db.into(db.syncState).insert(
+          SyncStateCompanion.insert(
+            id: const Value(0),
+            articlesRenderedThrough: const Value('2026-07-27T00:00:00Z'),
+          ),
+        );
+
     await resetLocalData(db: db, articlesDir: tempDir);
 
     expect(await db.select(db.localFeeds).get(), isEmpty);
     expect(await db.select(db.localArticles).get(), isEmpty);
+    expect(await db.select(db.syncState).get(), isEmpty);
     expect(await tempDir.exists(), isFalse);
   });
 

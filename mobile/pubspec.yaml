@@ -35,10 +35,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   supabase_flutter: ^2.16.0
-  drift: ^2.34.2
+  drift: ^2.34.3
   sqlite3_flutter_libs: ^0.6.0+eol
   path_provider: ^2.1.6
-  flutter_riverpod: ^3.3.2
+  flutter_riverpod: ^3.4.1
   webview_flutter: ^4.14.1
   workmanager: ^0.9.0+3
   archive: ^4.0.9
