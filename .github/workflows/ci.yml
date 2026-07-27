@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend-test:
@@ -51,8 +51,6 @@ jobs:
         with:
           path: mobile/.dart_tool
           key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
-          restore-keys: |
-            pub-${{ runner.os }}-
       - run: flutter pub get
       - run: dart run build_runner build
       - run: flutter analyze
