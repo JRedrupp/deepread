@@ -8,6 +8,7 @@ import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 LocalArticle _local({
   required String id,
@@ -232,15 +233,16 @@ void main() {
         downloadArticleZip: (_) async => throw StateError('network failure'),
       );
 
-      // The failure is isolated, not rethrown — syncArticles completes
-      // normally, but the watermark still must not advance.
-      await service.syncArticles();
+      // The failure is isolated internally but still surfaces at the end
+      // (so callers like the background task know to retry sooner), and
+      // the watermark still must not advance.
+      await expectLater(service.syncArticles(), throwsStateError);
 
       final watermark = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
       expect(watermark, isNull);
     });
 
-    test('one failing article does not block others in the same pass', () async {
+    test('one failing article does not block others in the same pass, but the failure still surfaces', () async {
       final service = SyncService(
         db,
         fetchReadyArticles: ({since}) async => [
@@ -271,7 +273,7 @@ void main() {
         },
       );
 
-      await service.syncArticles();
+      await expectLater(service.syncArticles(), throwsStateError);
 
       final storedB = await (db.select(db.localArticles)..where((a) => a.id.equals('b'))).getSingle();
       expect(storedB.localPath, 'articles/b');
@@ -287,6 +289,54 @@ void main() {
       // advance even though article b succeeded.
       final watermark = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
       expect(watermark, isNull);
+    });
+
+    test('a failed re-render leaves the previous good download in place', () async {
+      await db.into(db.localArticles).insert(
+            LocalArticlesCompanion.insert(
+              id: 'a',
+              feedId: 'feed-1',
+              title: 'A',
+              downloadedAt: DateTime.now(),
+              localPath: const Value('articles/a'),
+              renderedAt: const Value('2026-01-01T00:00:00Z'),
+            ),
+          );
+      final articleDir = Directory(p.join(docsDir.path, 'articles', 'a'));
+      await articleDir.create(recursive: true);
+      await File(p.join(articleDir.path, 'index.html')).writeAsString('<html>v1</html>');
+
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async => [
+          {
+            'id': 'a',
+            'feed_id': 'feed-1',
+            'title': 'A',
+            'byline': null,
+            'summary': null,
+            'published_at': null,
+            'rendered_at': '2026-02-01T00:00:00Z',
+            'storage_path': 'a-v2.zip',
+          },
+        ],
+        // A corrupt zip (valid EOCD signature, bogus central-directory
+        // size) — ZipDecoder.decodeBytes throws partway through instead of
+        // silently producing an empty archive.
+        downloadArticleZip: (_) async => Uint8List.fromList(
+          [0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 99, 0, 0, 0],
+        ),
+      );
+
+      await expectLater(service.syncArticles(), throwsA(anything));
+
+      expect(
+        await File('${docsDir.path}/articles/a/index.html').readAsString(),
+        '<html>v1</html>',
+      );
+      final stored = await (db.select(db.localArticles)..where((a) => a.id.equals('a'))).getSingle();
+      expect(stored.renderedAt, '2026-01-01T00:00:00Z');
+      expect(stored.localPath, 'articles/a');
     });
 
     test('paywall to full upgrade downloads and sets localPath', () async {

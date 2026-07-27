@@ -195,7 +195,7 @@ class SyncService {
     // per-row watermark advancement, or a failed row's rendered_at could
     // fall below the new watermark and be permanently skipped.
     String? newWatermark = since;
-    var hadFailure = false;
+    var failureCount = 0;
 
     for (final remote in rows) {
       final local = await (db.select(db.localArticles)..where((a) => a.id.equals(remote.id)))
@@ -215,7 +215,7 @@ class SyncService {
         }
       } catch (e) {
         log('Failed to sync article ${remote.id}: $e', name: 'SyncService');
-        hadFailure = true;
+        failureCount++;
         continue;
       }
 
@@ -226,7 +226,7 @@ class SyncService {
       }
     }
 
-    if (!hadFailure && newWatermark != since) {
+    if (failureCount == 0 && newWatermark != since) {
       // id must be explicit: SQLite's INTEGER PRIMARY KEY rowid-alias
       // behavior auto-assigns a new rowid whenever the column is omitted
       // from an INSERT, ignoring the column's SQL-level DEFAULT — so
@@ -235,6 +235,17 @@ class SyncService {
       await db.into(db.syncState).insertOnConflictUpdate(
             SyncStateCompanion.insert(id: const Value(0), articlesRenderedThrough: Value(newWatermark)),
           );
+    }
+
+    // Every row was attempted (isolation above), but callers still need to
+    // know something went wrong: FeedListScreen's sync-button handler shows
+    // this via a SnackBar, and the WorkManager background task uses it to
+    // retry sooner with backoff instead of waiting the full 15-minute
+    // periodic interval. Raised after the loop (and after any watermark
+    // write) so it never short-circuits processing or persistence of the
+    // rows that did succeed.
+    if (failureCount > 0) {
+      throw StateError('$failureCount article(s) failed to sync; will retry next pass');
     }
   }
 
@@ -259,13 +270,22 @@ class SyncService {
 
     final docsDir = await getApplicationDocumentsDirectory();
     final articleDir = Directory(p.join(docsDir.path, 'articles', id));
-    if (await articleDir.exists()) {
-      // Clear out a previous render's files first so a re-render with
-      // fewer images than the old one doesn't leave orphaned stale files.
-      await articleDir.delete(recursive: true);
-    }
-    await articleDir.create(recursive: true);
-    await _unzipInto(bytes, articleDir);
+
+    // Unzip into a staging dir first, leaving any existing (working) render
+    // in `articleDir` untouched until the new one is fully extracted. A
+    // corrupt/truncated zip then throws without deleting a previously-good
+    // article — it just leaves this pass's staging dir to be overwritten by
+    // the next attempt, instead of the reader opening to an empty folder.
+    final stagingDir = Directory(p.join(docsDir.path, 'articles', '$id.staging'));
+    if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+    await stagingDir.create(recursive: true);
+    await _unzipInto(bytes, stagingDir);
+
+    // Only now, with the new render fully on disk, swap it in. Clear out a
+    // previous render's files first so a re-render with fewer images than
+    // the old one doesn't leave orphaned stale files.
+    if (await articleDir.exists()) await articleDir.delete(recursive: true);
+    await stagingDir.rename(articleDir.path);
 
     await db.into(db.localArticles).insertOnConflictUpdate(
           LocalArticlesCompanion.insert(
