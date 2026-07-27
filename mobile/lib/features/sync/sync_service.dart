@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -184,29 +185,38 @@ class SyncService {
     final rows = rawRows.map(RemoteArticleRow.fromRow).toList();
 
     // Newest rendered_at observed this pass — becomes the new watermark,
-    // but only once every row below has been handled without throwing. No
-    // per-article error isolation exists yet (separate, deliberately
-    // deferred TODO item), so if any row throws, the watermark must NOT
-    // advance: the next pass re-fetches the same `since` window and
-    // retries. That's safe and cheap, since already-handled rows in that
-    // window will just hit ArticleSyncAction.skip again on retry — don't
-    // "optimize" this into per-row watermark advancement.
+    // but only once every row below has been handled without throwing.
+    // Each row's I/O is isolated (a bad zip/network/disk failure on one
+    // article doesn't stop the rest of the batch from syncing), but if
+    // *any* row failed, the watermark must still NOT advance: the next
+    // pass re-fetches the same `since` window and retries. That's safe and
+    // cheap, since already-handled rows in that window will just hit
+    // ArticleSyncAction.skip again on retry — don't "optimize" this into
+    // per-row watermark advancement, or a failed row's rendered_at could
+    // fall below the new watermark and be permanently skipped.
     String? newWatermark = since;
+    var hadFailure = false;
 
     for (final remote in rows) {
       final local = await (db.select(db.localArticles)..where((a) => a.id.equals(remote.id)))
           .getSingleOrNull();
 
-      switch (decideArticleSyncAction(remote: remote, local: local)) {
-        case ArticleSyncAction.skip:
-          break;
-        case ArticleSyncAction.backfillRenderedAt:
-          await (db.update(db.localArticles)..where((a) => a.id.equals(remote.id)))
-              .write(LocalArticlesCompanion(renderedAt: Value(remote.renderedAt)));
-        case ArticleSyncAction.insertPaywalled:
-          await _insertPaywalledArticle(remote);
-        case ArticleSyncAction.download:
-          await _downloadAndStore(remote);
+      try {
+        switch (decideArticleSyncAction(remote: remote, local: local)) {
+          case ArticleSyncAction.skip:
+            break;
+          case ArticleSyncAction.backfillRenderedAt:
+            await (db.update(db.localArticles)..where((a) => a.id.equals(remote.id)))
+                .write(LocalArticlesCompanion(renderedAt: Value(remote.renderedAt)));
+          case ArticleSyncAction.insertPaywalled:
+            await _insertPaywalledArticle(remote);
+          case ArticleSyncAction.download:
+            await _downloadAndStore(remote);
+        }
+      } catch (e) {
+        log('Failed to sync article ${remote.id}: $e', name: 'SyncService');
+        hadFailure = true;
+        continue;
       }
 
       final rowRenderedAt = remote.renderedAt;
@@ -216,7 +226,7 @@ class SyncService {
       }
     }
 
-    if (newWatermark != since) {
+    if (!hadFailure && newWatermark != since) {
       // id must be explicit: SQLite's INTEGER PRIMARY KEY rowid-alias
       // behavior auto-assigns a new rowid whenever the column is omitted
       // from an INSERT, ignoring the column's SQL-level DEFAULT — so

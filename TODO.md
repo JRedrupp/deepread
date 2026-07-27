@@ -6,12 +6,12 @@ Auth screens, the sync service, and add-feed wiring are now built and working en
 
 - [ ] **iOS background fetch config.** `BackgroundSync.register()` (`mobile/lib/features/sync/background_sync.dart`) calls `Workmanager().registerPeriodicTask`, but iOS also needs a `BGTaskSchedulerPermittedIdentifiers` entry in `Info.plist` (and corresponding native setup) that hasn't been added — registration is wrapped in try/catch so this fails soft rather than crashing the app, but background sync silently won't run on iOS until this is done.
 - [ ] **Sync doesn't paginate a single fetch, and an oversized first sync now permanently truncates.** `SyncService.syncArticles` added a `rendered_at` watermark so steady-state passes only fetch newly-ready/re-rendered rows, but a single pass is still one uncapped query — no `.limit()`/pagination. Previously a PostgREST-row-cap-truncated fetch was self-healing (the old code had no watermark, so it just refetched everything, including the truncated remainder, on the next pass); now the watermark advances to the max `rendered_at` seen in that page, so a truncated page **permanently** strands whatever didn't fit. Needs `.order('rendered_at').limit(N)` paging with the watermark only advancing once a full pass is confirmed complete (e.g. don't advance it at all if the page came back at the cap).
-- [ ] **Sync doesn't isolate per-article failures.** `SyncService._downloadAndStore` has no try/catch around individual articles — one bad zip download aborts the rest of that sync pass. The backend renderer already isolates per-article failures; the client sync loop should too.
 
 Everything below this section is genuinely deferred/out-of-scope for the MVP, not missing MVP work.
 
 ## Features
 
+- [ ] Surface partial sync failures in the UI. `SyncService.syncArticles` now isolates per-article failures (logged via `log(..., name: 'SyncService')`, doesn't throw), so `FeedListScreen._syncNow`'s catch-block SnackBar only fires on whole-pass failures (offline, expired session) — if every article in a pass fails to download but the feed list itself synced fine, the user sees no error at all. Minimal fix: have `syncNow`/`syncArticles` return a failure count for `FeedListScreen` to show in a SnackBar; don't build retry or reporting infra beyond that.
 - [ ] Feed auto-discovery + OPML import (MVP is paste-URL only)
 - [ ] Push notifications (FCM/APNs) to trigger faster sync (MVP polls on open + background fetch only)
 - [ ] Starring/favoriting articles

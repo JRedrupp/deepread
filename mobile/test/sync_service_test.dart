@@ -232,8 +232,59 @@ void main() {
         downloadArticleZip: (_) async => throw StateError('network failure'),
       );
 
-      await expectLater(service.syncArticles(), throwsStateError);
+      // The failure is isolated, not rethrown — syncArticles completes
+      // normally, but the watermark still must not advance.
+      await service.syncArticles();
 
+      final watermark = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+      expect(watermark, isNull);
+    });
+
+    test('one failing article does not block others in the same pass', () async {
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async => [
+          {
+            'id': 'a',
+            'feed_id': 'feed-1',
+            'title': 'A',
+            'byline': null,
+            'summary': null,
+            'published_at': null,
+            'rendered_at': '2026-01-01T00:00:00Z',
+            'storage_path': 'a.zip',
+          },
+          {
+            'id': 'b',
+            'feed_id': 'feed-1',
+            'title': 'B',
+            'byline': null,
+            'summary': null,
+            'published_at': null,
+            'rendered_at': '2026-01-02T00:00:00Z',
+            'storage_path': 'b.zip',
+          },
+        ],
+        downloadArticleZip: (storagePath) async {
+          if (storagePath == 'a.zip') throw StateError('network failure');
+          return _fakeZip(indexHtml: '<html>b</html>');
+        },
+      );
+
+      await service.syncArticles();
+
+      final storedB = await (db.select(db.localArticles)..where((a) => a.id.equals('b'))).getSingle();
+      expect(storedB.localPath, 'articles/b');
+      expect(
+        await File('${docsDir.path}/articles/b/index.html').readAsString(),
+        '<html>b</html>',
+      );
+
+      final storedA = await (db.select(db.localArticles)..where((a) => a.id.equals('a'))).getSingleOrNull();
+      expect(storedA, isNull);
+
+      // The batch had a failure (article a), so the watermark must not
+      // advance even though article b succeeded.
       final watermark = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
       expect(watermark, isNull);
     });
