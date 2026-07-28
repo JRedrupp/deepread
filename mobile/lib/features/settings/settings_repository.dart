@@ -15,6 +15,8 @@ class SettingsRepository {
       SettingsRepository(await SharedPreferences.getInstance());
 
   static const _lastSyncedAtKey = 'last_synced_at';
+  static const _refreshFrequencyMinutesKey = 'refresh_frequency_minutes';
+  static const _wifiOnlySyncKey = 'wifi_only_sync';
 
   DateTime? get lastSyncedAt {
     final raw = _prefs.getString(_lastSyncedAtKey);
@@ -22,4 +24,17 @@ class SettingsRepository {
   }
 
   Future<void> setLastSyncedAt(DateTime time) => _prefs.setString(_lastSyncedAtKey, time.toIso8601String());
+
+  /// Default of 15 matches today's hardcoded WorkManager interval — an
+  /// upgrading user sees no behavior change until they opt into something
+  /// else.
+  int get refreshFrequencyMinutes => _prefs.getInt(_refreshFrequencyMinutesKey) ?? 15;
+
+  Future<void> setRefreshFrequencyMinutes(int minutes) => _prefs.setInt(_refreshFrequencyMinutesKey, minutes);
+
+  /// Default of false matches today's Constraints(networkType: connected)
+  /// (any network) behavior.
+  bool get wifiOnlySync => _prefs.getBool(_wifiOnlySyncKey) ?? false;
+
+  Future<void> setWifiOnlySync(bool wifiOnly) => _prefs.setBool(_wifiOnlySyncKey, wifiOnly);
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'data/local/database.dart';
 import 'data/remote/supabase_client.dart';
 import 'features/auth/auth_gate.dart';
+import 'features/settings/settings_repository.dart';
 import 'features/sync/background_sync.dart';
 import 'theme/app_theme.dart';
 
@@ -12,7 +13,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppSupabase.initialize();
   try {
-    await BackgroundSync.register();
+    final settings = await SettingsRepository.load();
+    await BackgroundSync.register(
+      frequencyMinutes: settings.refreshFrequencyMinutes,
+      wifiOnly: settings.wifiOnlySync,
+    );
   } catch (e) {
     // Background registration failing (e.g. iOS without the
     // BGTaskSchedulerPermittedIdentifiers Info.plist entry — see

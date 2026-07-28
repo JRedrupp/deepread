@@ -92,5 +92,78 @@ void main() {
       expect(find.text('open settings'), findsOneWidget);
       expect(find.text('Sign out'), findsNothing);
     });
+
+    testWidgets('defaults to the 15 min preset and wifi-only off', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final segmentedButton = tester.widget<SegmentedButton<int>>(find.byType(SegmentedButton<int>));
+      expect(segmentedButton.selected, {15});
+      final wifiSwitch = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
+      expect(wifiSwitch.value, isFalse);
+    });
+
+    testWidgets('selecting a frequency preset persists it and re-registers background sync', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+      int? registeredFrequency;
+      bool? registeredWifiOnly;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: SettingsScreen(
+            onSignOut: () async {},
+            settingsRepository: settings,
+            onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
+              registeredFrequency = frequencyMinutes;
+              registeredWifiOnly = wifiOnly;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('1 hour'));
+      await tester.pumpAndSettle();
+
+      expect(settings.refreshFrequencyMinutes, 60);
+      expect(registeredFrequency, 60);
+      expect(registeredWifiOnly, isFalse);
+    });
+
+    testWidgets('toggling wifi-only persists it and re-registers background sync', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+      bool? registeredWifiOnly;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: SettingsScreen(
+            onSignOut: () async {},
+            settingsRepository: settings,
+            onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
+              registeredWifiOnly = wifiOnly;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+
+      expect(settings.wifiOnlySync, isTrue);
+      expect(registeredWifiOnly, isTrue);
+    });
   });
 }

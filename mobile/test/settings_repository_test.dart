@@ -22,4 +22,38 @@ void main() {
     final reloaded = SettingsRepository(await SharedPreferences.getInstance());
     expect(reloaded.lastSyncedAt, time);
   });
+
+  test('refreshFrequencyMinutes defaults to 15 (matches today\'s hardcoded interval)', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    expect(repo.refreshFrequencyMinutes, 15);
+  });
+
+  test('setRefreshFrequencyMinutes persists a chosen preset', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setRefreshFrequencyMinutes(60);
+
+    final reloaded = SettingsRepository(await SharedPreferences.getInstance());
+    expect(reloaded.refreshFrequencyMinutes, 60);
+  });
+
+  test('wifiOnlySync defaults to false (matches today\'s any-network behavior)', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    expect(repo.wifiOnlySync, isFalse);
+  });
+
+  test('setWifiOnlySync persists true', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setWifiOnlySync(true);
+
+    final reloaded = SettingsRepository(await SharedPreferences.getInstance());
+    expect(reloaded.wifiOnlySync, isTrue);
+  });
 }
