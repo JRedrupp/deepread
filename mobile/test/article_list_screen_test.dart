@@ -19,6 +19,7 @@ void main() {
       downloadedAt: DateTime.now(),
       summary: 'A summary.',
       isRead: false,
+      evicted: false,
     );
 
     await tester.pumpWidget(
@@ -34,5 +35,35 @@ void main() {
     await tester.pump();
 
     expect(find.text('[SUMMARY ONLY]'), findsOneWidget);
+  });
+
+  testWidgets('shows a REMOVED tag (not SUMMARY ONLY) for an evicted article', (tester) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+
+    const feed = LocalFeed(id: 'feed-1', url: 'https://example.com/feed', title: null);
+    final evicted = LocalArticle(
+      id: 'article-1',
+      feedId: 'feed-1',
+      title: 'Previously downloaded article',
+      downloadedAt: DateTime.now(),
+      isRead: true,
+      evicted: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark(),
+        home: ArticleListScreen(
+          db: db,
+          feed: feed,
+          articlesStream: Stream.value([evicted]),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('[REMOVED]'), findsOneWidget);
+    expect(find.text('[SUMMARY ONLY]'), findsNothing);
   });
 }

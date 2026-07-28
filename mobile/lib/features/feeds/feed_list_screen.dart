@@ -122,7 +122,7 @@ class _FeedListScreenState extends State<FeedListScreen> {
             tooltip: 'Settings',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => SettingsScreen(onSignOut: _signOut),
+                builder: (_) => SettingsScreen(onSignOut: _signOut, db: widget.db),
               ),
             ),
           ),

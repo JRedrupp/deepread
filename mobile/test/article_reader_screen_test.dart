@@ -15,6 +15,7 @@ void main() {
       downloadedAt: DateTime.now(),
       summary: 'An RSS-provided summary.',
       isRead: false,
+      evicted: false,
     );
 
     await tester.pumpWidget(
@@ -26,6 +27,29 @@ void main() {
     await tester.pump();
 
     expect(find.text('An RSS-provided summary.'), findsOneWidget);
+    expect(find.byType(WebViewWidget), findsNothing);
+  });
+
+  testWidgets('shows a removed-for-space message (not the paywall message) for an evicted article', (tester) async {
+    final article = LocalArticle(
+      id: 'article-1',
+      feedId: 'feed-1',
+      title: 'Previously downloaded article',
+      downloadedAt: DateTime.now(),
+      isRead: true,
+      evicted: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark(),
+        home: ArticleReaderScreen(article: article),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('removed'), findsOneWidget);
+    expect(find.textContaining('paywall'), findsNothing);
     expect(find.byType(WebViewWidget), findsNothing);
   });
 }

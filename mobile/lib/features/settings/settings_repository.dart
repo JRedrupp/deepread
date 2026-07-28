@@ -19,6 +19,8 @@ class SettingsRepository {
   static const _refreshFrequencyMinutesKey = 'refresh_frequency_minutes';
   static const _wifiOnlySyncKey = 'wifi_only_sync';
   static const _themeModeKey = 'theme_mode';
+  static const _retentionExpireReadAfterDaysKey = 'retention_expire_read_after_days';
+  static const _retentionCapPerFeedKey = 'retention_cap_per_feed';
 
   DateTime? get lastSyncedAt {
     final raw = _prefs.getString(_lastSyncedAtKey);
@@ -49,4 +51,28 @@ class SettingsRepository {
       };
 
   Future<void> setThemeMode(ThemeMode mode) => _prefs.setString(_themeModeKey, mode.name);
+
+  /// Default of null (disabled) is critical for upgrade safety — nobody's
+  /// downloaded library should get silently pruned the first time they
+  /// open an updated app.
+  int? get retentionExpireReadAfterDays => _prefs.getInt(_retentionExpireReadAfterDaysKey);
+
+  Future<void> setRetentionExpireReadAfterDays(int? days) async {
+    if (days == null) {
+      await _prefs.remove(_retentionExpireReadAfterDaysKey);
+    } else {
+      await _prefs.setInt(_retentionExpireReadAfterDaysKey, days);
+    }
+  }
+
+  /// Default of null (disabled) — see [retentionExpireReadAfterDays].
+  int? get retentionCapPerFeed => _prefs.getInt(_retentionCapPerFeedKey);
+
+  Future<void> setRetentionCapPerFeed(int? count) async {
+    if (count == null) {
+      await _prefs.remove(_retentionCapPerFeedKey);
+    } else {
+      await _prefs.setInt(_retentionCapPerFeedKey, count);
+    }
+  }
 }

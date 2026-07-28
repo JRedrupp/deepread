@@ -84,4 +84,40 @@ void main() {
     final reloaded = SettingsRepository(await SharedPreferences.getInstance());
     expect(reloaded.themeMode, ThemeMode.system);
   });
+
+  test('retentionExpireReadAfterDays defaults to null (disabled, so upgrading users keep everything)', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    expect(repo.retentionExpireReadAfterDays, isNull);
+  });
+
+  test('setRetentionExpireReadAfterDays persists a value and can clear it back to null', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setRetentionExpireReadAfterDays(30);
+    expect(SettingsRepository(await SharedPreferences.getInstance()).retentionExpireReadAfterDays, 30);
+
+    await repo.setRetentionExpireReadAfterDays(null);
+    expect(SettingsRepository(await SharedPreferences.getInstance()).retentionExpireReadAfterDays, isNull);
+  });
+
+  test('retentionCapPerFeed defaults to null (disabled)', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    expect(repo.retentionCapPerFeed, isNull);
+  });
+
+  test('setRetentionCapPerFeed persists a value and can clear it back to null', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setRetentionCapPerFeed(50);
+    expect(SettingsRepository(await SharedPreferences.getInstance()).retentionCapPerFeed, 50);
+
+    await repo.setRetentionCapPerFeed(null);
+    expect(SettingsRepository(await SharedPreferences.getInstance()).retentionCapPerFeed, isNull);
+  });
 }

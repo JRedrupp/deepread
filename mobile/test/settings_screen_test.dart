@@ -1,7 +1,9 @@
+import 'package:deepread/data/local/database.dart';
 import 'package:deepread/features/settings/settings_repository.dart';
 import 'package:deepread/features/settings/settings_screen.dart';
 import 'package:deepread/theme/app_theme.dart';
 import 'package:deepread/theme/theme_controller.dart';
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,17 +22,70 @@ void main() {
     });
   });
 
+  group('formatBytes', () {
+    test('formats bytes under 1 KB as B', () {
+      expect(formatBytes(512), '512 B');
+    });
+
+    test('formats kilobytes', () {
+      expect(formatBytes(2048), '2.0 KB');
+    });
+
+    test('formats megabytes', () {
+      expect(formatBytes(5 * 1024 * 1024), '5.0 MB');
+    });
+
+    test('formats gigabytes', () {
+      expect(formatBytes(2 * 1024 * 1024 * 1024), '2.00 GB');
+    });
+  });
+
   group('SettingsScreen', () {
-    setUp(() => ThemeController.mode.value = ThemeMode.dark);
+    late AppDatabase db;
+
+    // computeStorageBytes/onClearDownloaded are always overridden below with
+    // fakes that do no real file I/O — real dart:io operations (as the true
+    // RetentionService performs) don't reliably complete under
+    // testWidgets'/pumpAndSettle's fake-async zone without `tester.runAsync`,
+    // the same class of issue TECH_DEBT.md documents for drift .watch()
+    // streams. RetentionService's actual eviction/storage-computation logic
+    // is covered directly in retention_service_test.dart (plain `test()`
+    // bodies, no widget pumping) and its SyncService wiring in
+    // sync_service_test.dart — this file only needs to prove SettingsScreen
+    // wires taps to whatever callbacks it's given.
+    Future<int> noStorage(AppDatabase _) async => 0;
+    Future<void> noOpClear(AppDatabase _) async {}
+
+    setUp(() {
+      ThemeController.mode.value = ThemeMode.dark;
+      db = AppDatabase.forTesting(NativeDatabase.memory());
+    });
+
+    tearDown(() => db.close());
+
+    // The settings list keeps growing new sections; rather than fixing a
+    // scroll offset that breaks again next time, give the test surface a
+    // tall viewport so the whole ListView fits without scrolling at all.
+    Future<void> pumpTall(WidgetTester tester, Widget home) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(MaterialApp(theme: AppTheme.dark(), home: home));
+    }
 
     testWidgets('shows Never when nothing has synced yet', (tester) async {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsRepository(await SharedPreferences.getInstance());
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
         ),
       );
       await tester.pumpAndSettle();
@@ -43,10 +98,14 @@ void main() {
       final settings = SettingsRepository(await SharedPreferences.getInstance());
       await settings.setLastSyncedAt(DateTime(2026, 7, 28, 9, 5));
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
         ),
       );
       await tester.pumpAndSettle();
@@ -59,25 +118,26 @@ void main() {
       final settings = SettingsRepository(await SharedPreferences.getInstance());
       var signOutCalls = 0;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: Center(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => SettingsScreen(
-                        onSignOut: () async {
-                          signOutCalls++;
-                        },
-                        settingsRepository: settings,
-                      ),
+      await pumpTall(
+        tester,
+        Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SettingsScreen(
+                      onSignOut: () async {
+                        signOutCalls++;
+                      },
+                      settingsRepository: settings,
+                      db: db,
+                      computeStorageBytes: noStorage,
+                      onClearDownloaded: noOpClear,
                     ),
                   ),
-                  child: const Text('open settings'),
                 ),
+                child: const Text('open settings'),
               ),
             ),
           ),
@@ -88,11 +148,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Sign out'), findsOneWidget);
 
-      // The settings list has grown taller than the test viewport (more
-      // sections were added since this test was written) — scroll it into
-      // view before tapping.
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
 
@@ -105,10 +160,14 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsRepository(await SharedPreferences.getInstance());
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
         ),
       );
       await tester.pumpAndSettle();
@@ -125,17 +184,18 @@ void main() {
       int? registeredFrequency;
       bool? registeredWifiOnly;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(
-            onSignOut: () async {},
-            settingsRepository: settings,
-            onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
-              registeredFrequency = frequencyMinutes;
-              registeredWifiOnly = wifiOnly;
-            },
-          ),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
+          onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
+            registeredFrequency = frequencyMinutes;
+            registeredWifiOnly = wifiOnly;
+          },
         ),
       );
       await tester.pumpAndSettle();
@@ -153,16 +213,17 @@ void main() {
       final settings = SettingsRepository(await SharedPreferences.getInstance());
       bool? registeredWifiOnly;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(
-            onSignOut: () async {},
-            settingsRepository: settings,
-            onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
-              registeredWifiOnly = wifiOnly;
-            },
-          ),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
+          onSyncSettingsChanged: ({required frequencyMinutes, required wifiOnly}) async {
+            registeredWifiOnly = wifiOnly;
+          },
         ),
       );
       await tester.pumpAndSettle();
@@ -178,10 +239,14 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsRepository(await SharedPreferences.getInstance());
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
         ),
       );
       await tester.pumpAndSettle();
@@ -194,10 +259,14 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsRepository(await SharedPreferences.getInstance());
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
         ),
       );
       await tester.pumpAndSettle();
@@ -207,6 +276,103 @@ void main() {
 
       expect(settings.themeMode, ThemeMode.light);
       expect(ThemeController.mode.value, ThemeMode.light);
+    });
+
+    testWidgets('shows computed storage usage and defaults retention controls to Off', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: (_) async => 10,
+          onClearDownloaded: noOpClear,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('10 B'), findsOneWidget);
+      final expireSegmented =
+          tester.widget<SegmentedButton<int?>>(find.byKey(const Key('retention-expire-segmented')));
+      expect(expireSegmented.selected, {null});
+      final capSegmented = tester.widget<SegmentedButton<int?>>(find.byKey(const Key('retention-cap-segmented')));
+      expect(capSegmented.selected, {null});
+    });
+
+    testWidgets('selecting an expire-after preset persists it', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('30 days'));
+      await tester.pumpAndSettle();
+
+      expect(settings.retentionExpireReadAfterDays, 30);
+    });
+
+    testWidgets('selecting a cap-per-feed preset persists it', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: noStorage,
+          onClearDownloaded: noOpClear,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('50'));
+      await tester.pumpAndSettle();
+
+      expect(settings.retentionCapPerFeed, 50);
+    });
+
+    testWidgets('Clear downloaded articles asks for confirmation, then clears and refreshes usage', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+      var cleared = false;
+
+      await pumpTall(
+        tester,
+        SettingsScreen(
+          onSignOut: () async {},
+          settingsRepository: settings,
+          db: db,
+          computeStorageBytes: (_) async => cleared ? 0 : 100,
+          onClearDownloaded: (_) async => cleared = true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('100 B'), findsOneWidget);
+
+      await tester.tap(find.text('Clear downloaded articles'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clear downloaded articles?'), findsOneWidget);
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+
+      expect(cleared, isTrue);
+      expect(find.text('0 B'), findsOneWidget);
     });
   });
 }

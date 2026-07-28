@@ -28,6 +28,14 @@ void main() {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
 
+    // The settings list is taller than the default test viewport, and
+    // ListView only builds items near the visible area — use a tall
+    // viewport so "Sign out" further down the list is actually built.
+    tester.view.physicalSize = const Size(800, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark(),

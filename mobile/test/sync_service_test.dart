@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:deepread/data/local/database.dart';
 import 'package:deepread/features/settings/settings_repository.dart';
+import 'package:deepread/features/sync/retention_service.dart';
 import 'package:deepread/features/sync/sync_service.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
@@ -26,6 +27,7 @@ LocalArticle _local({
     isRead: isRead,
     localPath: localPath,
     renderedAt: renderedAt,
+    evicted: false,
   );
 }
 
@@ -508,6 +510,37 @@ void main() {
       await expectLater(service.syncArticles(), throwsStateError);
 
       expect(settings.lastSyncedAt, isNotNull);
+    });
+
+    test('applies the injected retention policy after a pass completes', () async {
+      await db.into(db.localArticles).insert(
+            LocalArticlesCompanion.insert(
+              id: 'old-read',
+              feedId: 'feed-1',
+              title: 'Old read article',
+              downloadedAt: DateTime(2020, 1, 1),
+              isRead: const Value(true),
+              localPath: const Value('articles/old-read'),
+            ),
+          );
+      final articleDir = Directory(p.join(docsDir.path, 'articles', 'old-read'));
+      await articleDir.create(recursive: true);
+      await File(p.join(articleDir.path, 'index.html')).writeAsString('<html></html>');
+
+      final retention = RetentionService(db, articlesDir: Directory(p.join(docsDir.path, 'articles')));
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async => [],
+        downloadArticleZip: (_) async => throw StateError('unused'),
+        applyRetentionPolicy: (_) => retention.applyAutoPolicy(expireReadAfterDays: 1),
+      );
+
+      await service.syncArticles();
+
+      final row = await (db.select(db.localArticles)..where((a) => a.id.equals('old-read'))).getSingle();
+      expect(row.evicted, isTrue);
+      expect(row.localPath, isNull);
+      expect(await articleDir.exists(), isFalse);
     });
 
     test('legacy backfill path updates renderedAt without downloading', () async {
