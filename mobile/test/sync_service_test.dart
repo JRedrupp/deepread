@@ -110,6 +110,46 @@ void main() {
     });
   });
 
+  group('pending full fetch signal', () {
+    late AppDatabase db;
+
+    setUp(() => db = AppDatabase.forTesting(NativeDatabase.memory()));
+    tearDown(() => db.close());
+
+    test('hasPendingFullFetch is false before anything marks it', () async {
+      expect(await hasPendingFullFetch(db), isFalse);
+    });
+
+    test('markPendingFullFetch then hasPendingFullFetch reads true', () async {
+      await markPendingFullFetch(db);
+
+      expect(await hasPendingFullFetch(db), isTrue);
+    });
+
+    test('clearPendingFullFetch resets the flag to false', () async {
+      await markPendingFullFetch(db);
+
+      await clearPendingFullFetch(db);
+
+      expect(await hasPendingFullFetch(db), isFalse);
+    });
+
+    test('marking preserves an existing watermark', () async {
+      await db.into(db.syncState).insertOnConflictUpdate(
+            SyncStateCompanion.insert(
+              id: const Value(0),
+              articlesRenderedThrough: const Value('2026-06-01T00:00:00Z'),
+            ),
+          );
+
+      await markPendingFullFetch(db);
+
+      final row = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingle();
+      expect(row.articlesRenderedThrough, '2026-06-01T00:00:00Z');
+      expect(row.needsFullFetch, isTrue);
+    });
+  });
+
   group('SyncService.syncArticles', () {
     late AppDatabase db;
     late Directory docsDir;

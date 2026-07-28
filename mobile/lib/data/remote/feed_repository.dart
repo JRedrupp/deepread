@@ -1,5 +1,8 @@
+import 'package:path_provider/path_provider.dart';
 import 'package:postgrest/postgrest.dart';
 
+import '../../features/feeds/local_feed_removal.dart';
+import '../../features/sync/sync_service.dart' show markPendingFullFetch;
 import '../local/database.dart';
 import 'supabase_client.dart';
 
@@ -32,6 +35,36 @@ class FeedRepository {
     await db.into(db.localFeeds).insertOnConflictUpdate(
           LocalFeedsCompanion.insert(id: feedId, url: url),
         );
+
+    // This write lands before the next sync pass ever compares local feed
+    // rows, so SyncService's own newly-subscribed-elsewhere detection would
+    // never catch this (re)subscription — mark it explicitly instead. See
+    // markPendingFullFetch's doc comment.
+    await markPendingFullFetch(db);
+  }
+
+  /// Removes the current user's subscription and this device's downloaded
+  /// copy of [feedId]'s articles. Never deletes the shared `feeds`/`articles`
+  /// rows themselves — other users may still be subscribed.
+  ///
+  /// Deletes the remote subscription first, deliberately: if local cleanup
+  /// ran first and the remote delete then failed, the next sync pass would
+  /// still see the subscription, find no matching local feed, and silently
+  /// re-download the whole feed. Remote-first makes a failure at either step
+  /// safe to retry — `DELETE` on Supabase matching zero rows is a no-op, not
+  /// an error, so re-running this after a local-cleanup failure just retries
+  /// the local half.
+  Future<void> unsubscribe(String feedId) async {
+    final client = AppSupabase.client;
+    final userId = client.auth.currentUser!.id;
+
+    await client.from('user_feed_subscriptions').delete().eq('user_id', userId).eq(
+          'feed_id',
+          feedId,
+        );
+
+    final docsDir = await getApplicationDocumentsDirectory();
+    await removeLocalFeedData(db: db, docsDir: docsDir, feedId: feedId);
   }
 
   Future<String> _findOrCreateFeed(String url) async {
