@@ -10,6 +10,7 @@ import '../../data/remote/feed_repository.dart';
 import '../../data/remote/supabase_client.dart';
 import '../articles/article_list_screen.dart';
 import '../auth/local_data_reset.dart';
+import '../settings/settings_screen.dart';
 import '../sync/sync_service.dart';
 import 'add_feed_screen.dart';
 
@@ -117,9 +118,13 @@ class _FeedListScreenState extends State<FeedListScreen> {
             onPressed: _syncing ? null : _syncNow,
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: _signOut,
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SettingsScreen(onSignOut: _signOut),
+              ),
+            ),
           ),
         ],
       ),

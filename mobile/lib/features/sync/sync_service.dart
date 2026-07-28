@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/local/database.dart';
 import '../../data/remote/supabase_client.dart';
+import '../settings/settings_repository.dart';
 
 /// A remote `articles` row as returned by the `fetchReadyArticles` query,
 /// parsed out of the raw PostgREST JSON map once so downstream logic
@@ -130,6 +131,11 @@ Future<void> clearPendingFullFetch(AppDatabase db) async {
       .write(const SyncStateCompanion(needsFullFetch: Value(false)));
 }
 
+Future<void> _defaultRecordLastSynced(DateTime time) async {
+  final settings = await SettingsRepository.load();
+  await settings.setLastSyncedAt(time);
+}
+
 /// Pulls down anything the backend worker has rendered for this user's
 /// subscribed feeds: refreshes local feed metadata, then downloads and
 /// unzips any newly-`ready` or newly-re-rendered articles this device
@@ -144,11 +150,13 @@ class SyncService {
     this.db, {
     this.fetchReadyArticles = _defaultFetchReadyArticles,
     this.downloadArticleZip = _defaultDownloadArticleZip,
+    this.recordLastSynced = _defaultRecordLastSynced,
   });
 
   final AppDatabase db;
   final Future<List<Map<String, dynamic>>> Function({String? since}) fetchReadyArticles;
   final Future<Uint8List> Function(String storagePath) downloadArticleZip;
+  final Future<void> Function(DateTime time) recordLastSynced;
 
   Future<void> syncNow() async {
     final userId = AppSupabase.client.auth.currentUser?.id;
@@ -272,6 +280,11 @@ class SyncService {
             SyncStateCompanion.insert(id: const Value(0), articlesRenderedThrough: Value(newWatermark)),
           );
     }
+
+    // Recorded regardless of failureCount — a partially-failed pass still
+    // "ran" (see the last-synced-time UI on the Settings screen), and this
+    // must happen before the throw below so it's not skipped when rows fail.
+    await recordLastSynced(DateTime.now());
 
     // Every row was attempted (isolation above), but callers still need to
     // know something went wrong: FeedListScreen's sync-button handler shows

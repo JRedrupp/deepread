@@ -3,12 +3,14 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:deepread/data/local/database.dart';
+import 'package:deepread/features/settings/settings_repository.dart';
 import 'package:deepread/features/sync/sync_service.dart';
-import 'package:drift/drift.dart' hide isNull;
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 LocalArticle _local({
   required String id,
@@ -162,6 +164,11 @@ void main() {
           );
 
       TestWidgetsFlutterBinding.ensureInitialized();
+      // Tests below that don't inject `recordLastSynced` fall through to the
+      // real default, which resolves a SettingsRepository via
+      // SharedPreferences.getInstance() — needs mock initial values or it
+      // throws MissingPluginException in a test environment.
+      SharedPreferences.setMockInitialValues({});
       const channel = MethodChannel('plugins.flutter.io/path_provider');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
         channel,
@@ -458,6 +465,49 @@ void main() {
         await File('${docsDir.path}/articles/a/index.html').readAsString(),
         '<html>v2</html>',
       );
+    });
+
+    test('records last-synced time via the injected settings repository after a successful pass', () async {
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async => [],
+        downloadArticleZip: (_) async => throw StateError('unused'),
+        recordLastSynced: settings.setLastSyncedAt,
+      );
+
+      final before = DateTime.now().subtract(const Duration(seconds: 1));
+      await service.syncArticles();
+      final after = DateTime.now().add(const Duration(seconds: 1));
+
+      final recorded = settings.lastSyncedAt;
+      expect(recorded, isNotNull);
+      expect(recorded!.isAfter(before) && recorded.isBefore(after), isTrue);
+    });
+
+    test('records last-synced time even when a row fails mid-pass', () async {
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+      final service = SyncService(
+        db,
+        fetchReadyArticles: ({since}) async => [
+          {
+            'id': 'a',
+            'feed_id': 'feed-1',
+            'title': 'A',
+            'byline': null,
+            'summary': null,
+            'published_at': null,
+            'rendered_at': '2026-01-01T00:00:00Z',
+            'storage_path': 'a.zip',
+          },
+        ],
+        downloadArticleZip: (_) async => throw StateError('network failure'),
+        recordLastSynced: settings.setLastSyncedAt,
+      );
+
+      await expectLater(service.syncArticles(), throwsStateError);
+
+      expect(settings.lastSyncedAt, isNotNull);
     });
 
     test('legacy backfill path updates renderedAt without downloading', () async {
