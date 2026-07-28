@@ -102,7 +102,7 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
                       if (article.localPath == null) const SizedBox(width: 8),
                       Text(
                         article.publishedAt?.toIso8601String().split('T').first ?? '',
-                        style: AppTheme.metadataStyle(),
+                        style: AppTheme.metadataStyle(context),
                       ),
                     ],
                   ),

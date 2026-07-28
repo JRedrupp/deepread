@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Thin typed wrapper around [SharedPreferences] — the single source of
@@ -17,6 +18,7 @@ class SettingsRepository {
   static const _lastSyncedAtKey = 'last_synced_at';
   static const _refreshFrequencyMinutesKey = 'refresh_frequency_minutes';
   static const _wifiOnlySyncKey = 'wifi_only_sync';
+  static const _themeModeKey = 'theme_mode';
 
   DateTime? get lastSyncedAt {
     final raw = _prefs.getString(_lastSyncedAtKey);
@@ -37,4 +39,14 @@ class SettingsRepository {
   bool get wifiOnlySync => _prefs.getBool(_wifiOnlySyncKey) ?? false;
 
   Future<void> setWifiOnlySync(bool wifiOnly) => _prefs.setBool(_wifiOnlySyncKey, wifiOnly);
+
+  /// Default of dark matches today's only theme — upgrading users see no
+  /// change until they opt into light or system.
+  ThemeMode get themeMode => switch (_prefs.getString(_themeModeKey)) {
+        'light' => ThemeMode.light,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.dark,
+      };
+
+  Future<void> setThemeMode(ThemeMode mode) => _prefs.setString(_themeModeKey, mode.name);
 }

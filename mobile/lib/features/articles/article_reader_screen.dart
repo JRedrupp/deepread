@@ -108,11 +108,11 @@ class _SummaryOnlyView extends StatelessWidget {
         children: [
           Text(
             'This article is behind a paywall — only a summary is available offline.',
-            style: AppTheme.metadataStyle(color: AppTheme.accent, fontSize: 13),
+            style: AppTheme.metadataStyle(context, color: AppTheme.accent, fontSize: 13),
           ),
           if (metadata.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(metadata, style: AppTheme.metadataStyle()),
+            Text(metadata, style: AppTheme.metadataStyle(context)),
           ],
           const SizedBox(height: 16),
           Text(

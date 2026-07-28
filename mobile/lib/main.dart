@@ -8,12 +8,14 @@ import 'features/auth/auth_gate.dart';
 import 'features/settings/settings_repository.dart';
 import 'features/sync/background_sync.dart';
 import 'theme/app_theme.dart';
+import 'theme/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppSupabase.initialize();
+  final settings = await SettingsRepository.load();
+  ThemeController.mode.value = settings.themeMode;
   try {
-    final settings = await SettingsRepository.load();
     await BackgroundSync.register(
       frequencyMinutes: settings.refreshFrequencyMinutes,
       wifiOnly: settings.wifiOnlySync,
@@ -35,10 +37,15 @@ class DeepReadApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'DeepRead',
-      theme: AppTheme.dark(),
-      home: AuthGate(db: db),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (context, mode, _) => MaterialApp(
+        title: 'DeepRead',
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: mode,
+        home: AuthGate(db: db),
+      ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:deepread/features/settings/settings_repository.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -55,5 +56,32 @@ void main() {
 
     final reloaded = SettingsRepository(await SharedPreferences.getInstance());
     expect(reloaded.wifiOnlySync, isTrue);
+  });
+
+  test('themeMode defaults to dark (matches today\'s only theme, so upgrading users see no change)', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    expect(repo.themeMode, ThemeMode.dark);
+  });
+
+  test('setThemeMode persists light', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setThemeMode(ThemeMode.light);
+
+    final reloaded = SettingsRepository(await SharedPreferences.getInstance());
+    expect(reloaded.themeMode, ThemeMode.light);
+  });
+
+  test('setThemeMode persists system', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = SettingsRepository(await SharedPreferences.getInstance());
+
+    await repo.setThemeMode(ThemeMode.system);
+
+    final reloaded = SettingsRepository(await SharedPreferences.getInstance());
+    expect(reloaded.themeMode, ThemeMode.system);
   });
 }

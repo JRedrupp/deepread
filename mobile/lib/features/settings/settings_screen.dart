@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../theme/theme_controller.dart';
 import '../sync/background_sync.dart';
 import 'settings_repository.dart';
 
@@ -11,6 +12,12 @@ const _frequencyPresets = [
   (minutes: 30, label: '30 min'),
   (minutes: 60, label: '1 hour'),
   (minutes: 180, label: '3 hours'),
+];
+
+const _themeModePresets = [
+  (mode: ThemeMode.dark, label: 'Dark'),
+  (mode: ThemeMode.light, label: 'Light'),
+  (mode: ThemeMode.system, label: 'System'),
 ];
 
 /// Fixed, deterministic absolute-time format (not relative — "5 minutes
@@ -56,6 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   DateTime? _lastSyncedAt;
   int _frequencyMinutes = 15;
   bool _wifiOnlySync = false;
+  ThemeMode _themeMode = ThemeMode.dark;
 
   @override
   void initState() {
@@ -71,7 +79,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _lastSyncedAt = settings.lastSyncedAt;
       _frequencyMinutes = settings.refreshFrequencyMinutes;
       _wifiOnlySync = settings.wifiOnlySync;
+      _themeMode = settings.themeMode;
     });
+  }
+
+  Future<void> _updateThemeMode(ThemeMode mode) async {
+    final settings = _settings;
+    if (settings == null) return;
+    await settings.setThemeMode(mode);
+    setState(() => _themeMode = mode);
+    ThemeController.mode.value = mode;
   }
 
   Future<void> _updateFrequency(int minutes) async {
@@ -143,6 +160,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             value: _wifiOnlySync,
             onChanged: _updateWifiOnly,
+          ),
+          const Divider(height: 1),
+          const _SectionHeader('Appearance'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Theme'),
+                const SizedBox(height: 8),
+                SegmentedButton<ThemeMode>(
+                  segments: [
+                    for (final preset in _themeModePresets) ButtonSegment(value: preset.mode, label: Text(preset.label)),
+                  ],
+                  selected: {_themeMode},
+                  onSelectionChanged: (selected) => _updateThemeMode(selected.first),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  "Only re-themes the app itself — downloaded articles keep their existing dark "
+                  'styling in the reader regardless of this setting.',
+                  style: captionStyle,
+                ),
+              ],
+            ),
           ),
           const Divider(height: 1),
           ListTile(

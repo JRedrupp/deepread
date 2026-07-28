@@ -1,6 +1,7 @@
 import 'package:deepread/features/settings/settings_repository.dart';
 import 'package:deepread/features/settings/settings_screen.dart';
 import 'package:deepread/theme/app_theme.dart';
+import 'package:deepread/theme/theme_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +21,8 @@ void main() {
   });
 
   group('SettingsScreen', () {
+    setUp(() => ThemeController.mode.value = ThemeMode.dark);
+
     testWidgets('shows Never when nothing has synced yet', (tester) async {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsRepository(await SharedPreferences.getInstance());
@@ -85,6 +88,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Sign out'), findsOneWidget);
 
+      // The settings list has grown taller than the test viewport (more
+      // sections were added since this test was written) — scroll it into
+      // view before tapping.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
 
@@ -164,6 +172,41 @@ void main() {
 
       expect(settings.wifiOnlySync, isTrue);
       expect(registeredWifiOnly, isTrue);
+    });
+
+    testWidgets('defaults to Dark selected in the theme selector', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final themeSelector = tester.widget<SegmentedButton<ThemeMode>>(find.byType(SegmentedButton<ThemeMode>));
+      expect(themeSelector.selected, {ThemeMode.dark});
+    });
+
+    testWidgets('selecting Light persists it and updates ThemeController', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsRepository(await SharedPreferences.getInstance());
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: SettingsScreen(onSignOut: () async {}, settingsRepository: settings),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Light'));
+      await tester.pumpAndSettle();
+
+      expect(settings.themeMode, ThemeMode.light);
+      expect(ThemeController.mode.value, ThemeMode.light);
     });
   });
 }
