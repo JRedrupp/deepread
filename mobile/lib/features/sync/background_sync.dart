@@ -25,20 +25,31 @@ void backgroundSyncDispatcher() {
   });
 }
 
+/// 15 minutes is Android WorkManager's minimum periodic interval — callers
+/// are expected to only pass presets at or above that floor.
+Duration backgroundSyncFrequency(int minutes) => Duration(minutes: minutes);
+
+NetworkType backgroundSyncNetworkType({required bool wifiOnly}) =>
+    wifiOnly ? NetworkType.unmetered : NetworkType.connected;
+
 class BackgroundSync {
   BackgroundSync._();
 
-  static Future<void> register() async {
+  static Future<void> register({required int frequencyMinutes, required bool wifiOnly}) async {
     await Workmanager().initialize(backgroundSyncDispatcher);
     await Workmanager().registerPeriodicTask(
       _syncTaskName,
       _syncTaskName,
-      // 15 minutes is Android WorkManager's minimum periodic interval;
       // iOS treats this as a hint, not a guarantee (BGTaskScheduler decides
       // actual timing). See TODO.md — iOS also needs Info.plist entries
       // (BGTaskSchedulerPermittedIdentifiers) that aren't set up yet.
-      frequency: const Duration(minutes: 15),
-      constraints: Constraints(networkType: NetworkType.connected),
+      //
+      // Re-registering with a different frequency/wifiOnly later (e.g. from
+      // the Settings screen) relies on ExistingPeriodicWorkPolicy defaulting
+      // to UPDATE on Android, which updates this work's schedule/constraints
+      // in place rather than leaving the old registration running.
+      frequency: backgroundSyncFrequency(frequencyMinutes),
+      constraints: Constraints(networkType: backgroundSyncNetworkType(wifiOnly: wifiOnly)),
     );
   }
 }

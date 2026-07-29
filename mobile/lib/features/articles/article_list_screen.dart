@@ -98,11 +98,11 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
                     children: [
                       if (!article.isRead) const StatusTag('NEW'),
                       if (!article.isRead) const SizedBox(width: 8),
-                      if (article.localPath == null) const StatusTag('SUMMARY ONLY'),
+                      if (article.localPath == null) StatusTag(article.evicted ? 'REMOVED' : 'SUMMARY ONLY'),
                       if (article.localPath == null) const SizedBox(width: 8),
                       Text(
                         article.publishedAt?.toIso8601String().split('T').first ?? '',
-                        style: AppTheme.metadataStyle(),
+                        style: AppTheme.metadataStyle(context),
                       ),
                     ],
                   ),

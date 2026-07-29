@@ -51,6 +51,16 @@ class LocalArticles extends Table {
   /// row compare as "newer than local" forever.
   TextColumn get renderedAt => text().nullable()();
 
+  /// True once this article's downloaded content has been removed from
+  /// disk to reclaim space (manual "clear downloaded articles", auto-expire,
+  /// or a per-feed cap — see RetentionService). [localPath] is null in this
+  /// case too, same as a paywalled article, but [evicted] disambiguates the
+  /// two in the UI: a paywalled article never had content to show, while an
+  /// evicted one did and had it removed. [renderedAt] is left untouched on
+  /// eviction so the sync watermark comparison still treats this row as
+  /// up to date and won't redownload it until a genuine re-render happens.
+  BoolColumn get evicted => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -98,12 +108,19 @@ class AppDatabase extends _$AppDatabase {
             await m.deleteTable(localArticles.actualTableName);
             await m.createTable(localArticles);
             // createTable builds from the current Dart definition, so this
-            // table is already renderedAt-shaped — don't also addColumn.
-          } else if (from < 3) {
-            // Unlike the v1->v2 change, this is a new nullable column with
-            // no default, which SQLite supports via ALTER TABLE ADD COLUMN
-            // directly — no need to wipe every user's downloaded library.
-            await m.addColumn(localArticles, localArticles.renderedAt);
+            // table is already renderedAt- and evicted-shaped — don't also
+            // addColumn either of those below.
+          } else {
+            if (from < 3) {
+              // Unlike the v1->v2 change, this is a new nullable column
+              // with no default, which SQLite supports via ALTER TABLE ADD
+              // COLUMN directly — no need to wipe every user's downloaded
+              // library.
+              await m.addColumn(localArticles, localArticles.renderedAt);
+            }
+            if (from < 4) {
+              await m.addColumn(localArticles, localArticles.evicted);
+            }
           }
           if (from < 3) {
             // Needed on both the from<2 and from<3 paths above. createTable
