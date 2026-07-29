@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/local/database.dart';
 import '../../data/remote/supabase_client.dart';
+import '../settings/settings_repository.dart';
+import 'retention_service.dart';
 
 /// A remote `articles` row as returned by the `fetchReadyArticles` query,
 /// parsed out of the raw PostgREST JSON map once so downstream logic
@@ -104,6 +106,48 @@ Future<Uint8List> _defaultDownloadArticleZip(String storagePath) {
   return AppSupabase.client.storage.from('articles').download(storagePath);
 }
 
+/// Whether this device has a pending full-catalog fetch to do, set by
+/// [FeedRepository.subscribe] whenever it (re)subscribes to a feed on this
+/// device. See [SyncState.needsFullFetch] for why this exists as a
+/// separate signal from [SyncService]'s own newly-subscribed-elsewhere
+/// detection.
+Future<bool> hasPendingFullFetch(AppDatabase db) async {
+  final state = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+  return state?.needsFullFetch ?? false;
+}
+
+/// Sets the pending-full-fetch signal read by [hasPendingFullFetch].
+/// Preserves any existing watermark — only `needsFullFetch` is written.
+Future<void> markPendingFullFetch(AppDatabase db) async {
+  await db.into(db.syncState).insertOnConflictUpdate(
+        const SyncStateCompanion(id: Value(0), needsFullFetch: Value(true)),
+      );
+}
+
+/// Clears the pending-full-fetch signal. Called by [SyncService.syncNow]
+/// only after a full fetch has completed without any row failing, so a
+/// failed pass safely retries with the signal still set next time.
+Future<void> clearPendingFullFetch(AppDatabase db) async {
+  await (db.update(db.syncState)..where((s) => s.id.equals(0)))
+      .write(const SyncStateCompanion(needsFullFetch: Value(false)));
+}
+
+Future<void> _defaultRecordLastSynced(DateTime time) async {
+  final settings = await SettingsRepository.load();
+  await settings.setLastSyncedAt(time);
+}
+
+Future<void> _defaultApplyRetentionPolicy(AppDatabase db) async {
+  final settings = await SettingsRepository.load();
+  final expireDays = settings.retentionExpireReadAfterDays;
+  final capPerFeed = settings.retentionCapPerFeed;
+  if (expireDays == null && capPerFeed == null) return;
+
+  final docsDir = await getApplicationDocumentsDirectory();
+  final retention = RetentionService(db, articlesDir: Directory(p.join(docsDir.path, 'articles')));
+  await retention.applyAutoPolicy(expireReadAfterDays: expireDays, capPerFeed: capPerFeed);
+}
+
 /// Pulls down anything the backend worker has rendered for this user's
 /// subscribed feeds: refreshes local feed metadata, then downloads and
 /// unzips any newly-`ready` or newly-re-rendered articles this device
@@ -118,26 +162,40 @@ class SyncService {
     this.db, {
     this.fetchReadyArticles = _defaultFetchReadyArticles,
     this.downloadArticleZip = _defaultDownloadArticleZip,
+    this.recordLastSynced = _defaultRecordLastSynced,
+    this.applyRetentionPolicy = _defaultApplyRetentionPolicy,
   });
 
   final AppDatabase db;
   final Future<List<Map<String, dynamic>>> Function({String? since}) fetchReadyArticles;
   final Future<Uint8List> Function(String storagePath) downloadArticleZip;
+  final Future<void> Function(DateTime time) recordLastSynced;
+  final Future<void> Function(AppDatabase db) applyRetentionPolicy;
 
   Future<void> syncNow() async {
     final userId = AppSupabase.client.auth.currentUser?.id;
     if (userId == null) return;
 
     final hasNewSubscription = await _syncFeeds(userId);
+    final pendingFullFetch = await hasPendingFullFetch(db);
     // A newly-subscribed feed's already-rendered back catalog predates the
     // current watermark (this is a *shared* rendering cache — a feed's
     // articles can have been rendered long before this user subscribed),
     // so a plain `.gt('rendered_at', since)` pass would permanently skip
-    // them. Fall back to a full fetch on the pass a new subscription is
-    // detected — the old rows that pass has to re-examine all hit
-    // ArticleSyncAction.skip cheaply, so this is just a network-cost
-    // trade-off, not a correctness one.
-    await syncArticles(forceFullFetch: hasNewSubscription);
+    // them. Fall back to a full fetch when either a subscription made on
+    // another device just showed up here for the first time
+    // (hasNewSubscription — caught by comparing against local feed rows),
+    // or this device itself just (re)subscribed via FeedRepository.subscribe
+    // (pendingFullFetch — that write happens before local feed rows can be
+    // compared, so hasNewSubscription alone never catches it). The old rows
+    // either pass has to re-examine all hit ArticleSyncAction.skip cheaply,
+    // so this is just a network-cost trade-off, not a correctness one.
+    await syncArticles(forceFullFetch: hasNewSubscription || pendingFullFetch);
+
+    // Only clear once the full fetch above has actually completed — if it
+    // threw, this line is never reached, so the signal survives for the
+    // next pass to retry rather than being silently lost.
+    if (pendingFullFetch) await clearPendingFullFetch(db);
   }
 
   /// Returns true if any feed in the response wasn't already present
@@ -236,6 +294,15 @@ class SyncService {
             SyncStateCompanion.insert(id: const Value(0), articlesRenderedThrough: Value(newWatermark)),
           );
     }
+
+    // Recorded regardless of failureCount — a partially-failed pass still
+    // "ran" (see the last-synced-time UI on the Settings screen), and this
+    // must happen before the throw below so it's not skipped when rows fail.
+    await recordLastSynced(DateTime.now());
+
+    // Independent bookkeeping over existing local state, not tied to this
+    // pass's own success — runs on every pass (manual and background).
+    await applyRetentionPolicy(db);
 
     // Every row was attempted (isolation above), but callers still need to
     // know something went wrong: FeedListScreen's sync-button handler shows

@@ -128,7 +128,15 @@ moves via `release/*` or `hotfix/*` merges and always reflects what's actually d
   the same workflow and back-merge.
 - `.github/workflows/ci.yml` runs backend `pytest` and mobile `flutter analyze`/`flutter test` on
   every PR into `develop` or `main`, and both branches require it to pass (no required review
-  count — solo-maintainer repo, and GitHub disallows self-approval anyway).
+  count — solo-maintainer repo, and GitHub disallows self-approval anyway). It also runs on every
+  `push` to `develop` (i.e. again right after a PR merges) — that's not redundant, it's what warms
+  the Actions cache at the default-branch scope so the *next* PR's first run can restore from it
+  instead of starting fully cold (PR-scoped caches live under `refs/pull/N/merge` and can't be
+  reused by other PRs; only a default-branch — or same/base-branch — cache can). Not added on
+  `main` too: GitHub Actions cache lookups already fall back to the repo's default branch
+  (`develop`) from anywhere, including `release/*`/`hotfix/*` PRs targeting `main`, so a
+  `main`-scoped cache would be redundant — and would only add pressure on the repo's Actions cache
+  quota, which is already near/over the 10GB eviction cap (see TECH_DEBT.md).
 
 ## Supabase (`supabase/migrations/`)
 

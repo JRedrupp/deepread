@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 /// Dev-tool inspired theme: dark by default, monospace for metadata,
-/// sans-serif for titles/chrome, subtle borders instead of shadows.
+/// sans-serif for titles/chrome, subtle borders instead of shadows. `light()`
+/// mirrors the same look with light surfaces — note the actual downloaded
+/// article content shown in the reader's WebView is unaffected by either
+/// theme: its CSS is baked in server-side at render time (see CLAUDE.md).
 class AppTheme {
   AppTheme._();
 
@@ -12,6 +15,12 @@ class AppTheme {
   static const Color accent = Color(0xFF4FD1B5);
   static const Color textPrimary = Color(0xFFE6E8EB);
   static const Color textSecondary = Color(0xFF8A94A3);
+
+  static const Color lightBackground = Color(0xFFF5F7FA);
+  static const Color lightSurface = Color(0xFFFFFFFF);
+  static const Color lightBorder = Color(0xFFD8DEE6);
+  static const Color lightTextPrimary = Color(0xFF1A2027);
+  static const Color lightTextSecondary = Color(0xFF5B6472);
 
   static ThemeData dark() {
     final base = ThemeData(
@@ -50,12 +59,52 @@ class AppTheme {
     );
   }
 
+  static ThemeData light() {
+    final base = ThemeData(
+      brightness: Brightness.light,
+      useMaterial3: true,
+      scaffoldBackgroundColor: lightBackground,
+      colorScheme: const ColorScheme.light(
+        surface: lightSurface,
+        primary: accent,
+        onPrimary: Color(0xFF06201A),
+        onSurface: lightTextPrimary,
+      ),
+    );
+
+    return base.copyWith(
+      appBarTheme: const AppBarTheme(
+        backgroundColor: lightBackground,
+        foregroundColor: lightTextPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      cardTheme: CardThemeData(
+        color: lightSurface,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+          side: const BorderSide(color: lightBorder, width: 1),
+        ),
+      ),
+      dividerTheme: const DividerThemeData(color: lightBorder, thickness: 1),
+      textTheme: base.textTheme.apply(
+        bodyColor: lightTextPrimary,
+        displayColor: lightTextPrimary,
+      ),
+    );
+  }
+
   /// Terminal-readout style text for metadata: timestamps, domains,
   /// sync status, byte sizes. Kept visually distinct from body/title text.
-  static TextStyle metadataStyle({Color? color, double fontSize = 12}) {
+  /// Needs [context] to pick the right default color under whichever
+  /// theme (dark/light) is currently active.
+  static TextStyle metadataStyle(BuildContext context, {Color? color, double fontSize = 12}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GoogleFonts.jetBrainsMono(
       fontSize: fontSize,
-      color: color ?? textSecondary,
+      color: color ?? (isDark ? textSecondary : lightTextSecondary),
       letterSpacing: 0.2,
     );
   }
@@ -73,7 +122,7 @@ class StatusTag extends StatelessWidget {
     final tagColor = color ?? AppTheme.accent;
     return Text(
       '[$label]',
-      style: AppTheme.metadataStyle(color: tagColor, fontSize: 11),
+      style: AppTheme.metadataStyle(context, color: tagColor, fontSize: 11),
     );
   }
 }

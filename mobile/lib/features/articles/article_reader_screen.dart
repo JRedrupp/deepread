@@ -87,8 +87,11 @@ class _ArticleReaderScreenState extends State<ArticleReaderScreen> {
   }
 }
 
-/// Shown for paywalled articles, which have only an RSS-provided summary
-/// and no rendered HTML to display in a WebView.
+/// Shown when there's no rendered HTML to display in a WebView — either the
+/// article is paywalled (only an RSS-provided summary was ever available),
+/// or it was downloaded and later evicted to reclaim device storage (see
+/// RetentionService). [LocalArticle.evicted] disambiguates the two, since
+/// both cases share the same `localPath == null` shape.
 class _SummaryOnlyView extends StatelessWidget {
   const _SummaryOnlyView({required this.article});
 
@@ -107,12 +110,14 @@ class _SummaryOnlyView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'This article is behind a paywall — only a summary is available offline.',
-            style: AppTheme.metadataStyle(color: AppTheme.accent, fontSize: 13),
+            article.evicted
+                ? "This article's local copy was removed to save space — only a summary, if any, is available offline."
+                : 'This article is behind a paywall — only a summary is available offline.',
+            style: AppTheme.metadataStyle(context, color: AppTheme.accent, fontSize: 13),
           ),
           if (metadata.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(metadata, style: AppTheme.metadataStyle()),
+            Text(metadata, style: AppTheme.metadataStyle(context)),
           ],
           const SizedBox(height: 16),
           Text(

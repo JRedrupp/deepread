@@ -51,6 +51,16 @@ class LocalArticles extends Table {
   /// row compare as "newer than local" forever.
   TextColumn get renderedAt => text().nullable()();
 
+  /// True once this article's downloaded content has been removed from
+  /// disk to reclaim space (manual "clear downloaded articles", auto-expire,
+  /// or a per-feed cap — see RetentionService). [localPath] is null in this
+  /// case too, same as a paywalled article, but [evicted] disambiguates the
+  /// two in the UI: a paywalled article never had content to show, while an
+  /// evicted one did and had it removed. [renderedAt] is left untouched on
+  /// eviction so the sync watermark comparison still treats this row as
+  /// up to date and won't redownload it until a genuine re-render happens.
+  BoolColumn get evicted => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -66,6 +76,14 @@ class SyncState extends Table {
   /// null before the first successful sync.
   TextColumn get articlesRenderedThrough => text().nullable()();
 
+  /// Set by [FeedRepository.subscribe] whenever this device (re)subscribes
+  /// to a feed, since that write happens synchronously before the next
+  /// sync pass — which means the feed is already present in [LocalFeeds]
+  /// by the time [SyncService]'s own "is this a new subscription" check
+  /// runs, so that check alone would never catch it. Consumed and cleared
+  /// by [SyncService.syncNow] once a full-catalog fetch has completed.
+  BoolColumn get needsFullFetch => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -76,7 +94,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -90,16 +108,29 @@ class AppDatabase extends _$AppDatabase {
             await m.deleteTable(localArticles.actualTableName);
             await m.createTable(localArticles);
             // createTable builds from the current Dart definition, so this
-            // table is already renderedAt-shaped — don't also addColumn.
-          } else if (from < 3) {
-            // Unlike the v1->v2 change, this is a new nullable column with
-            // no default, which SQLite supports via ALTER TABLE ADD COLUMN
-            // directly — no need to wipe every user's downloaded library.
-            await m.addColumn(localArticles, localArticles.renderedAt);
+            // table is already renderedAt- and evicted-shaped — don't also
+            // addColumn either of those below.
+          } else {
+            if (from < 3) {
+              // Unlike the v1->v2 change, this is a new nullable column
+              // with no default, which SQLite supports via ALTER TABLE ADD
+              // COLUMN directly — no need to wipe every user's downloaded
+              // library.
+              await m.addColumn(localArticles, localArticles.renderedAt);
+            }
+            if (from < 4) {
+              await m.addColumn(localArticles, localArticles.evicted);
+            }
           }
           if (from < 3) {
-            // Needed on both the from<2 and from<3 paths above.
+            // Needed on both the from<2 and from<3 paths above. createTable
+            // builds from the current Dart definition, so this table is
+            // already needsFullFetch-shaped — don't also addColumn below.
             await m.createTable(syncState);
+          } else if (from < 4) {
+            // New non-null-with-default column — plain ALTER TABLE ADD
+            // COLUMN, no data migration needed.
+            await m.addColumn(syncState, syncState.needsFullFetch);
           }
         },
       );

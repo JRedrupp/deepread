@@ -10,11 +10,12 @@ import '../../data/remote/feed_repository.dart';
 import '../../data/remote/supabase_client.dart';
 import '../articles/article_list_screen.dart';
 import '../auth/local_data_reset.dart';
+import '../settings/settings_screen.dart';
 import '../sync/sync_service.dart';
 import 'add_feed_screen.dart';
 
 class FeedListScreen extends StatefulWidget {
-  const FeedListScreen({super.key, required this.db, this.feedsStream});
+  const FeedListScreen({super.key, required this.db, this.feedsStream, this.onUnsubscribe});
 
   final AppDatabase db;
 
@@ -23,6 +24,11 @@ class FeedListScreen extends StatefulWidget {
   /// deliver events when subscribed to directly inside a testWidgets
   /// fake-async zone.
   final Stream<List<LocalFeed>>? feedsStream;
+
+  /// Overridable so widget tests can assert an unsubscribe was requested
+  /// for the right feed without touching `AppSupabase.client` or
+  /// `path_provider` (both hit by the default `_removeFeed`).
+  final Future<void> Function(LocalFeed feed)? onUnsubscribe;
 
   @override
   State<FeedListScreen> createState() => _FeedListScreenState();
@@ -112,9 +118,13 @@ class _FeedListScreenState extends State<FeedListScreen> {
             onPressed: _syncing ? null : _syncNow,
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: _signOut,
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SettingsScreen(onSignOut: _signOut, db: widget.db),
+              ),
+            ),
           ),
         ],
       ),
@@ -140,6 +150,12 @@ class _FeedListScreenState extends State<FeedListScreen> {
                       builder: (_) => ArticleListScreen(db: widget.db, feed: feed),
                     ),
                   ),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (_) => _confirmUnsubscribe(feed),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'unsubscribe', child: Text('Unsubscribe')),
+                    ],
+                  ),
                 ),
               );
             },
@@ -163,5 +179,57 @@ class _FeedListScreenState extends State<FeedListScreen> {
     // background sync, so the feed's title (and any already-rendered
     // articles) show up right away.
     unawaited(_syncNow());
+  }
+
+  Future<void> _confirmUnsubscribe(LocalFeed feed) async {
+    final articleCount = (await (widget.db.select(widget.db.localArticles)
+              ..where((a) => a.feedId.equals(feed.id)))
+            .get())
+        .length;
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsubscribe from feed?'),
+        content: Text(
+          'This removes $articleCount downloaded article${articleCount == 1 ? '' : 's'} '
+          'from this device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Unsubscribe'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await (widget.onUnsubscribe ?? _removeFeed)(feed);
+    }
+  }
+
+  Future<void> _removeFeed(LocalFeed feed) async {
+    try {
+      // Drain any in-flight sync first — same race _signOut guards
+      // against: a sync mid-flight could re-insert this feed's rows
+      // between our local cleanup and its own completion.
+      await _syncFuture;
+    } catch (_) {}
+
+    try {
+      await FeedRepository(widget.db).unsubscribe(feed.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove feed: $e')),
+        );
+      }
+    }
   }
 }

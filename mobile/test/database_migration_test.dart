@@ -122,4 +122,106 @@ void main() {
     final syncStateRows = await db.select(db.syncState).get();
     expect(syncStateRows, isEmpty);
   });
+
+  test('upgrading from schema v3 adds sync_state.needs_full_fetch, defaulting to false', () async {
+    final tempDir = await Directory.systemTemp.createTemp('deepread_migration_test_');
+    final dbFile = File(p.join(tempDir.path, 'v3.sqlite'));
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    // Seed a v3 database on disk: sync_state exists, but with no
+    // needs_full_fetch column yet.
+    final raw = sqlite3.sqlite3.open(dbFile.path);
+    raw.execute('''
+      CREATE TABLE local_feeds (
+        id TEXT NOT NULL PRIMARY KEY,
+        url TEXT NOT NULL,
+        title TEXT
+      );
+    ''');
+    raw.execute('''
+      CREATE TABLE local_articles (
+        id TEXT NOT NULL PRIMARY KEY,
+        feed_id TEXT NOT NULL REFERENCES local_feeds (id),
+        title TEXT NOT NULL,
+        byline TEXT,
+        published_at INTEGER,
+        downloaded_at INTEGER NOT NULL,
+        local_path TEXT,
+        summary TEXT,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        rendered_at TEXT
+      );
+    ''');
+    raw.execute('''
+      CREATE TABLE sync_state (
+        id INTEGER NOT NULL PRIMARY KEY DEFAULT 0,
+        articles_rendered_through TEXT
+      );
+    ''');
+    raw.execute(
+      "INSERT INTO sync_state (id, articles_rendered_through) VALUES (0, '2026-07-27T00:00:00Z')",
+    );
+    raw.execute('PRAGMA user_version = 3');
+    raw.close();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    addTearDown(db.close);
+
+    final row = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingle();
+    expect(row.articlesRenderedThrough, '2026-07-27T00:00:00Z');
+    expect(row.needsFullFetch, isFalse);
+  });
+
+  test('upgrading from schema v3 adds the evicted column, defaulting to false', () async {
+    final tempDir = await Directory.systemTemp.createTemp('deepread_migration_test_');
+    final dbFile = File(p.join(tempDir.path, 'v3.sqlite'));
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    // Seed a v3 database on disk: renderedAt present, sync_state present,
+    // no evicted column yet.
+    final raw = sqlite3.sqlite3.open(dbFile.path);
+    raw.execute('''
+      CREATE TABLE local_feeds (
+        id TEXT NOT NULL PRIMARY KEY,
+        url TEXT NOT NULL,
+        title TEXT
+      );
+    ''');
+    raw.execute('''
+      CREATE TABLE local_articles (
+        id TEXT NOT NULL PRIMARY KEY,
+        feed_id TEXT NOT NULL REFERENCES local_feeds (id),
+        title TEXT NOT NULL,
+        byline TEXT,
+        published_at INTEGER,
+        downloaded_at INTEGER NOT NULL,
+        local_path TEXT,
+        summary TEXT,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        rendered_at TEXT
+      );
+    ''');
+    raw.execute('''
+      CREATE TABLE sync_state (
+        id INTEGER NOT NULL DEFAULT 0 PRIMARY KEY,
+        articles_rendered_through TEXT
+      );
+    ''');
+    raw.execute("INSERT INTO local_feeds (id, url) VALUES ('feed-1', 'https://example.com/feed')");
+    raw.execute('''
+      INSERT INTO local_articles (id, feed_id, title, downloaded_at, local_path, rendered_at)
+      VALUES ('article-old', 'feed-1', 'Old article', 0, 'articles/article-old', '2026-01-01T00:00:00Z')
+    ''');
+    raw.execute('PRAGMA user_version = 3');
+    raw.close();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    addTearDown(db.close);
+
+    final row =
+        await (db.select(db.localArticles)..where((a) => a.id.equals('article-old'))).getSingle();
+    expect(row.localPath, 'articles/article-old');
+    expect(row.renderedAt, '2026-01-01T00:00:00Z');
+    expect(row.evicted, isFalse);
+  });
 }
