@@ -31,14 +31,14 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 
 ## Storage & scaling
 
-- [ ] Automated retention policy (auto-expire read articles, or cap articles per feed) — MVP keeps everything until manually deleted
+- [ ] Per-feed article-count cap — the server-side retention policy (`deepread_worker.cleanup`) is age-based TTL only; a per-feed cap was deferred to avoid PostgREST group-by/window-function complexity. Revisit if a single high-volume feed blows past what age-based expiry alone bounds.
 - [ ] Per-user rate limiting/quotas on feed adds — MVP has no cost-abuse protection beyond basic sanity limits
 - [ ] Admin/observability view for failed renders & dead-lettered articles
 - [ ] Split poller/renderer into separate services with a real queue (Redis) once usage justifies it — MVP uses a single worker process with `articles.status` as an implicit queue
 
 ## Tooling
 
-- [ ] Auto-apply Supabase migrations on release — `supabase/migrations/` is still pasted into the SQL Editor by hand per `supabase/README.md`. Would hook into `.github/workflows/release.yml` alongside the backend deploy step, but needs the Supabase CLI project link set up first (not present in this repo yet).
+- [ ] PR-time migration validation against a shadow/staging Supabase project (e.g. `supabase db diff`/`db push --dry-run` in `ci.yml`) — deliberately deferred when migrations were automated in `release.yml`, since it needs a second Supabase project that doesn't exist yet.
 
 ## Business
 
