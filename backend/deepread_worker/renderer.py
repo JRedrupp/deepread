@@ -8,6 +8,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from supabase import Client
 
 from .config import Settings
+from .db import rows
 from .packaging import package_article, sanitize
 from .paywall import looks_paywalled
 from .robots import is_allowed
@@ -44,7 +45,7 @@ async def render_pending_articles(
         async with semaphore:
             await _render_one(db, settings, browser, http, article)
 
-    await asyncio.gather(*(_bounded(a) for a in pending.data))
+    await asyncio.gather(*(_bounded(a) for a in rows(pending.data)))
 
 
 async def _render_one(
@@ -163,9 +164,7 @@ async def _mark_retry_or_failed(db: Client, settings: Settings, article: dict) -
             {"status": "failed", "retry_count": retry_count, "failure_reason": "max_retries"}
         ).eq("id", article["id"]).execute()
     else:
-        db.table("articles").update({"retry_count": retry_count}).eq(
-            "id", article["id"]
-        ).execute()
+        db.table("articles").update({"retry_count": retry_count}).eq("id", article["id"]).execute()
 
 
 def _now() -> str:
