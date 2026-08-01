@@ -19,9 +19,7 @@ async def is_allowed(url: str, *, user_agent: str, http: httpx.AsyncClient) -> b
 
     if not parser.mtime():
         try:
-            response = await http.get(
-                f"{parsed.scheme}://{parsed.netloc}/robots.txt", timeout=10
-            )
+            response = await http.get(f"{parsed.scheme}://{parsed.netloc}/robots.txt", timeout=10)
             if response.status_code == 200:
                 await asyncio.to_thread(parser.parse, response.text.splitlines())
             else:

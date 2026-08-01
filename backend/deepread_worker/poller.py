@@ -1,12 +1,15 @@
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import feedparser
 import httpx
 from supabase import Client
 
 from .config import Settings
+from .db import rows
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ async def poll_due_feeds(db: Client, settings: Settings, http: httpx.AsyncClient
         .execute()
     )
 
-    for feed in due.data:
+    for feed in rows(due.data):
         try:
             await _poll_one_feed(db, http, feed["id"], feed["url"])
         except Exception:
@@ -43,11 +46,7 @@ async def _poll_one_feed(db: Client, http: httpx.AsyncClient, feed_id: str, feed
             continue
 
         existing = (
-            db.table("articles")
-            .select("id")
-            .eq("canonical_url", canonical_url)
-            .limit(1)
-            .execute()
+            db.table("articles").select("id").eq("canonical_url", canonical_url).limit(1).execute()
         )
         if existing.data:
             continue
@@ -69,6 +68,12 @@ async def _poll_one_feed(db: Client, http: httpx.AsyncClient, feed_id: str, feed
 
 
 def _entry_published_at(entry: feedparser.FeedParserDict) -> str | None:
-    if getattr(entry, "published_parsed", None) is None:
+    published_parsed = getattr(entry, "published_parsed", None)
+    if published_parsed is None:
         return None
-    return datetime(*entry.published_parsed[:6], tzinfo=UTC).isoformat()
+    # feedparser ships no type stubs, so published_parsed is seen as Any —
+    # cast to the real runtime type (a 9-field struct_time) so unpacking its
+    # first 6 fields into datetime()'s positional args doesn't read as an
+    # unbounded-length tuple that could collide with the tzinfo kwarg.
+    parsed = cast(time.struct_time, published_parsed)
+    return datetime(*parsed[:6], tzinfo=UTC).isoformat()

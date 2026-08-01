@@ -4,7 +4,7 @@ export
 DART_DEFINES = --dart-define=SUPABASE_URL=$(SUPABASE_URL) --dart-define=SUPABASE_PUBLISHABLE_KEY=$(SUPABASE_PUBLISHABLE_KEY)
 APK = mobile/build/app/outputs/flutter-apk/app-debug.apk
 
-.PHONY: help check-env mobile-generate mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-render-url backend-deploy backend-logs
+.PHONY: help check-env mobile-generate mobile-run mobile-build mobile-install mobile-analyze mobile-test backend-venv backend-run backend-test backend-lint backend-render-url backend-cleanup backend-deploy backend-logs lint
 
 help:
 	@echo "make mobile-generate  - regenerate build_runner code (drift, etc.), gitignored"
@@ -16,9 +16,12 @@ help:
 	@echo "make backend-venv     - create backend/.venv and install deps + chromium"
 	@echo "make backend-run      - run the poller/renderer worker locally"
 	@echo "make backend-test     - run backend pytest suite"
+	@echo "make backend-lint     - ruff check + ruff format --check + mypy over backend/"
 	@echo "make backend-render-url URL=<url> - render one real URL through the pipeline, no Supabase needed"
+	@echo "make backend-cleanup [DRY_RUN=1] - run one retention/orphan-sweep pass against real data"
 	@echo "make backend-deploy   - flyctl deploy the worker to Fly.io (deepread-worker app)"
 	@echo "make backend-logs     - tail production logs from Fly.io"
+	@echo "make lint             - backend-lint + mobile-analyze (everything, repo-wide)"
 
 # mobile/.env is gitignored — copy mobile/.env.example and fill in your
 # project's URL + anon/publishable key before running any mobile-* target.
@@ -28,6 +31,8 @@ check-env:
 		echo "Copy mobile/.env.example to mobile/.env and fill it in."; \
 		exit 1; \
 	fi
+
+lint: backend-lint mobile-analyze
 
 mobile-generate:
 	cd mobile && dart run build_runner build
@@ -56,8 +61,14 @@ backend-run:
 backend-test:
 	cd backend && . .venv/bin/activate && python -m pytest
 
+backend-lint:
+	cd backend && . .venv/bin/activate && ruff check . && ruff format --check . && mypy deepread_worker/ tests/
+
 backend-render-url:
 	cd backend && . .venv/bin/activate && python -m deepread_worker.debug_render $(URL)
+
+backend-cleanup:
+	cd backend && . .venv/bin/activate && python -m deepread_worker.cleanup $(if $(DRY_RUN),--dry-run)
 
 # Requires flyctl (https://fly.io/install.sh) authenticated against the
 # "deepread" org — secrets (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) are

@@ -5,6 +5,7 @@ import httpx
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
+from .cleanup import run_cleanup_pass
 from .config import Settings
 from .db import make_client
 from .poller import poll_due_feeds
@@ -41,10 +42,20 @@ async def _renderer_loop(settings: Settings) -> None:
             await browser.close()
 
 
+async def _cleanup_loop(settings: Settings) -> None:
+    db = make_client(settings)
+    while True:
+        try:
+            await run_cleanup_pass(db, settings)
+        except Exception:
+            logger.exception("Cleanup loop iteration failed")
+        await asyncio.sleep(settings.cleanup_interval_seconds)
+
+
 async def main() -> None:
     load_dotenv()
     settings = Settings.from_env()
-    await asyncio.gather(_poller_loop(settings), _renderer_loop(settings))
+    await asyncio.gather(_poller_loop(settings), _renderer_loop(settings), _cleanup_loop(settings))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "ruff>=0.7",
+  "mypy>=1.13",
 ]
 
 [build-system]
@@ -31,3 +32,10 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+# First mypy adoption on this codebase — no library stubs exist for
+# feedparser/nh3/etc, and chasing every third-party stub down isn't this
+# change's scope. Revisit per-package once stubs are worth pinning down.
+ignore_missing_imports = true
