@@ -58,6 +58,13 @@ def build_expired_or_filter(cutoff: datetime) -> str:
     return f"published_at.lt.{cutoff_iso},and(published_at.is.null,created_at.lt.{cutoff_iso})"
 
 
+def build_stale_claim_filter(cutoff: datetime) -> str:
+    """Nulls-included: a row claimed before this column existed (or by a claim
+    update that itself failed to persist claimed_at) must count as stale
+    immediately, not survive forever unreclaimed."""
+    return f"claimed_at.is.null,claimed_at.lt.{cutoff.isoformat()}"
+
+
 def filter_zip_candidates(rows: list[dict]) -> list[dict]:
     """Defense-in-depth: only ever act on rows that actually have a storage_path,
     even though the query already filters for `storage_path is not null`."""
@@ -146,6 +153,36 @@ def list_hard_delete_candidates(db: Client, settings: Settings) -> list[dict]:
         .execute()
     )
     return rows(result.data)
+
+
+def list_stale_claims(db: Client, settings: Settings) -> list[dict]:
+    cutoff = datetime.now(UTC) - timedelta(minutes=settings.stale_claim_minutes)
+    result = (
+        db.table("articles")
+        .select("id, retry_count")
+        .eq("status", "rendering")
+        .or_(build_stale_claim_filter(cutoff))
+        .limit(settings.cleanup_batch_size)
+        .execute()
+    )
+    return rows(result.data)
+
+
+def reclaim_stale_claims(db: Client, settings: Settings, candidates: list[dict]) -> None:
+    for c in candidates:
+        retry_count = c["retry_count"] + 1
+        if retry_count >= settings.render_max_retries:
+            db.table("articles").update(
+                {
+                    "status": "failed",
+                    "retry_count": retry_count,
+                    "failure_reason": "stale_claim_max_retries",
+                }
+            ).eq("id", c["id"]).execute()
+        else:
+            db.table("articles").update(
+                {"status": "pending", "retry_count": retry_count, "claimed_at": None}
+            ).eq("id", c["id"]).execute()
 
 
 def hard_delete_articles(db: Client, settings: Settings, candidates: list[dict]) -> None:
@@ -250,6 +287,10 @@ async def run_cleanup_pass(db: Client, settings: Settings) -> None:
             if orphans:
                 await asyncio.to_thread(remove_storage_objects, db, settings, orphans)
 
+    stale_claims = await asyncio.to_thread(list_stale_claims, db, settings)
+    if stale_claims:
+        await asyncio.to_thread(reclaim_stale_claims, db, settings, stale_claims)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -294,6 +335,11 @@ def main() -> None:
             print(f"Would remove {len(orphans)} orphaned Storage object(s)")
             for name in orphans[:20]:
                 print(f"  {name}")
+
+    stale_claims = list_stale_claims(db, settings)
+    print(f"Would reclaim {len(stale_claims)} stale 'rendering' claim(s)")
+    for c in stale_claims[:20]:
+        print(f"  {c['id']}  retry_count={c['retry_count']}")
 
 
 if __name__ == "__main__":
