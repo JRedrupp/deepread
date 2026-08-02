@@ -101,8 +101,12 @@ Failures anywhere in that pipeline retry up to `render_max_retries` (via `retry_
   TODO.md) since all real rendering work already happened server-side.
 - `features/sync/background_sync.dart` — `workmanager` periodic task. Runs in a **separate isolate**
   with no access to the running app's memory, so it re-initializes Supabase and opens its own
-  `AppDatabase` from scratch. iOS needs additional native `Info.plist` setup that isn't done yet
-  (registration is wrapped in try/catch so this fails soft).
+  `AppDatabase` from scratch. iOS's native BGTaskScheduler setup (`Info.plist` keys and
+  `AppDelegate.swift` registration) is now wired up (unverified on real hardware — see
+  TECH_DEBT.md); the try/catch around
+  `BackgroundSync.register()` in `main.dart` still exists and still matters for *other* causes of
+  registration failure (e.g. a future OS-level restriction), not for the missing-config gap it
+  used to be covering for.
 - `features/auth/auth_gate.dart` — Supabase auth session is the single source of truth for
   logged-in state (`StreamBuilder` over `onAuthStateChange`); no separate local auth flag.
 - Plain `StatefulWidget`/`setState` throughout — `riverpod` is a listed dependency but currently

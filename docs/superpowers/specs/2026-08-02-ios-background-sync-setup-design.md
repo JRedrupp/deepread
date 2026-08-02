@@ -1,5 +1,9 @@
 # iOS background sync setup — design
 
+> **Superseded:** Task 2's `AppDelegate.swift` approach below was written against the wrong
+> `workmanager_apple` version and corrected after implementation — see the Addendum at the end of
+> this doc for what actually shipped and why.
+
 ## Problem
 
 `BackgroundSync.register()` (`mobile/lib/features/sync/background_sync.dart`) calls
@@ -154,3 +158,31 @@ failure mode on Android.
   behavior (documented in that file's comments) is unchanged.
 - **Not addressed:** the OEM battery-restriction problem already tracked separately in TODO.md for
   Android (Settings-page-gated prompt) — out of scope, different platform, different root cause.
+
+## Addendum: correction after implementation
+
+This design was written against `workmanager_apple` 0.9.6, read directly from
+`~/.pub-cache/hosted/pub.dev/workmanager_apple-0.9.6/ios/...`. That's not the version this project
+actually builds against: `mobile/pubspec.yaml`'s `dependency_overrides` pins `workmanager_apple` to
+`0.9.1+2`, not `0.9.6` — an override added in an earlier commit for an unrelated Android AGP-9
+Gradle compatibility reason (see the comment above it in `pubspec.yaml`), with no consideration of
+iOS at the time this design was drafted. The gap wasn't caught until implementation, when
+`WorkmanagerPlugin.registerLaunchHandlers()` (Task 2's design above) turned out not to exist in
+0.9.1+2 at all — it was only added in the later 0.9.6 release.
+
+The corrected `AppDelegate.swift` approach calls
+`WorkmanagerPlugin.registerPeriodicTask(withIdentifier:frequency:)` unconditionally in
+`didFinishLaunchingWithOptions`, because 0.9.1+2 has no auto-registration path at all (unlike
+0.9.6) — the Dart-invoked host API only ever `submit()`s a scheduled task, it never `register()`s
+the launch handler itself, so this native call is the only place the handler ever gets registered.
+
+The iOS deployment target also moved from 13.0 to 14.0: `workmanager_apple` 0.9.1+2's podspec and
+`Package.swift` both require iOS 14 as their minimum, unlike the 13.0 this design assumed
+(matching `BGTaskScheduler`'s own iOS 13+ minimum, not the plugin's actual floor). User-approved
+given no iOS release exists yet, so there's no existing install base to drop support for.
+
+A new `mobile/ios/Podfile` was also added, contradicting this design's and the plan's original
+"no Podfile" constraint — Flutter's own auto-generated Podfile template ships with its `platform`
+line commented out, which silently defaults to a stale deployment target that doesn't reflect this
+project's actual `IPHONEOS_DEPLOYMENT_TARGET`. An explicit, committed Podfile pins `platform :ios,
+'14.0'` so CocoaPods can't silently disagree with the Xcode project setting.

@@ -1,3 +1,5 @@
+# Must match IPHONEOS_DEPLOYMENT_TARGET in Runner.xcodeproj/project.pbxproj — nothing enforces
+# these two independent sources of truth stay in sync.
 platform :ios, '14.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.

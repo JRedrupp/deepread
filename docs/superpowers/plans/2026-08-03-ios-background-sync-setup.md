@@ -8,6 +8,11 @@
 
 **Tech Stack:** Flutter/Dart (`workmanager` 0.10.1 / `workmanager_apple` 0.9.6), Swift (iOS `AppDelegate.swift`), GitHub Actions (`macos-latest` runner).
 
+> **Superseded:** Task 2's `AppDelegate.swift` approach below was written against the wrong
+> `workmanager_apple` version and corrected after implementation — see the Addendum at the end of
+> the design doc (`docs/superpowers/specs/2026-08-02-ios-background-sync-setup-design.md`) for what
+> actually shipped and why.
+
 ## Global Constraints
 
 - No macOS/Xcode/iPhone/simulator available in this dev environment — every native-code step here is unverifiable locally. The only verification available before a human with Mac access checks it for real is: (a) local syntax/structure checks using Python's stdlib `plistlib`/`yaml`, and (b) the new CI job actually compiling on a `macos-latest` GitHub Actions runner once pushed.
