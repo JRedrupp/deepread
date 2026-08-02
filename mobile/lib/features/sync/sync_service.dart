@@ -106,11 +106,11 @@ Future<Uint8List> _defaultDownloadArticleZip(String storagePath) {
   return AppSupabase.client.storage.from('articles').download(storagePath);
 }
 
-/// Whether this device has a pending full-catalog fetch to do, set by
-/// [FeedRepository.subscribe] whenever it (re)subscribes to a feed on this
-/// device. See [SyncState.needsFullFetch] for why this exists as a
-/// separate signal from [SyncService]'s own newly-subscribed-elsewhere
-/// detection.
+/// Whether this device has a pending full-catalog fetch to do — the single
+/// durable signal for that, set by either [FeedRepository.subscribe] (this
+/// device doing the subscribing) or [SyncService]'s `syncFeedRows` (a
+/// subscription made on a *different* device first showing up here via
+/// sync). See [SyncState.needsFullFetch] for the full contract.
 Future<bool> hasPendingFullFetch(AppDatabase db) async {
   final state = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
   return state?.needsFullFetch ?? false;
