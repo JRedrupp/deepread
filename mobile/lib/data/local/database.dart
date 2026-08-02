@@ -76,12 +76,16 @@ class SyncState extends Table {
   /// null before the first successful sync.
   TextColumn get articlesRenderedThrough => text().nullable()();
 
-  /// Set by [FeedRepository.subscribe] whenever this device (re)subscribes
-  /// to a feed, since that write happens synchronously before the next
-  /// sync pass — which means the feed is already present in [LocalFeeds]
-  /// by the time [SyncService]'s own "is this a new subscription" check
-  /// runs, so that check alone would never catch it. Consumed and cleared
-  /// by [SyncService.syncNow] once a full-catalog fetch has completed.
+  /// Set whenever a feed subscription might have an already-rendered back
+  /// catalog this device hasn't pulled yet: by [FeedRepository.subscribe]
+  /// when this device does the subscribing, or by `SyncService`'s
+  /// `syncFeedRows` when a subscription made on a *different* device first
+  /// shows up here. Both call sites mark this before writing the
+  /// corresponding [LocalFeeds] row, since once that row exists there's no
+  /// other way to detect the feed was ever newly-subscribed. Consumed and
+  /// cleared by [SyncService.syncNow] only once a full-catalog fetch has
+  /// completed without failing — a failed pass leaves it set so the next
+  /// pass retries.
   BoolColumn get needsFullFetch => boolean().withDefault(const Constant(false))();
 
   @override
