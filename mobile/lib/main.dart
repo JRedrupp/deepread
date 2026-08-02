@@ -21,10 +21,11 @@ Future<void> main() async {
       wifiOnly: settings.wifiOnlySync,
     );
   } catch (e) {
-    // Background registration failing (e.g. iOS without the
-    // BGTaskSchedulerPermittedIdentifiers Info.plist entry — see
-    // TODO.md) shouldn't prevent the app from starting. Manual "sync
-    // now" still works either way.
+    // iOS's Info.plist/AppDelegate registration is wired up (see
+    // TECH_DEBT.md — unverified on real hardware), but background
+    // registration failing for other reasons (e.g. a future OS-level
+    // restriction) still shouldn't prevent the app from starting. Manual
+    // "sync now" still works either way.
     log('BackgroundSync.register failed: $e', name: 'main');
   }
   runApp(DeepReadApp(db: AppDatabase()));

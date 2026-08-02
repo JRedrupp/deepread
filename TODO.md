@@ -1,12 +1,7 @@
 # TODO
 
-## MVP — remaining (not yet built, not deferred)
-
-Auth screens, the sync service, and add-feed wiring are now built and working end-to-end. What's left from the original MVP scope:
-
-- [ ] **iOS background fetch config.** `BackgroundSync.register()` (`mobile/lib/features/sync/background_sync.dart`) calls `Workmanager().registerPeriodicTask`, but iOS also needs a `BGTaskSchedulerPermittedIdentifiers` entry in `Info.plist` (and corresponding native setup) that hasn't been added — registration is wrapped in try/catch so this fails soft rather than crashing the app, but background sync silently won't run on iOS until this is done.
-
-Everything below this section is genuinely deferred/out-of-scope for the MVP, not missing MVP work.
+MVP scope (auth screens, sync service, add-feed wiring, and iOS background sync config) is now
+fully built. Everything below is deferred/out-of-scope for the MVP, not missing MVP work.
 
 ## Features
 
