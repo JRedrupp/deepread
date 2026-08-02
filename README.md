@@ -52,7 +52,7 @@ Apply `supabase/migrations/` in order (paste into the dashboard's SQL Editor, or
 
 ## Backend deployment
 
-The worker runs on Fly.io as app `deepread-worker` (org `deepread`), configured via `backend/fly.toml` — no HTTP service is exposed since it's a pure background poller/renderer. Fly's default 2-machine setup gives us a primary + a standby that only takes over on host hardware failure (not for load-balancing), which conveniently means only one instance is ever actively polling/rendering — see the "stuck `rendering` rows" note in TECH_DEBT.md for what that assumption depends on if this ever changes.
+The worker runs on Fly.io as app `deepread-worker` (org `deepread`), configured via `backend/fly.toml` — no HTTP service is exposed since it's a pure background poller/renderer. Fly's default 2-machine setup gives us a primary + a standby that only takes over on host hardware failure (not for load-balancing), which conveniently means only one instance is ever actively polling/rendering — see the "Stuck `rendering` rows" note in TECH_DEBT.md for what that assumption depends on if this ever changes (the render claim's optimistic lock only has to defend against crash recovery, not a true concurrent claimer).
 
 ```
 make backend-deploy   # flyctl deploy --app deepread-worker

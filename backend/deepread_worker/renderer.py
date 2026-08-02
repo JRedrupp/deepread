@@ -60,7 +60,7 @@ async def _render_one(
     # `pending` rows on both machines would double-render every article.
     claim = (
         db.table("articles")
-        .update({"status": "rendering"})
+        .update({"status": "rendering", "claimed_at": _now()})
         .eq("id", article_id)
         .eq("status", "pending")
         .execute()
@@ -164,7 +164,9 @@ async def _mark_retry_or_failed(db: Client, settings: Settings, article: dict) -
             {"status": "failed", "retry_count": retry_count, "failure_reason": "max_retries"}
         ).eq("id", article["id"]).execute()
     else:
-        db.table("articles").update({"retry_count": retry_count}).eq("id", article["id"]).execute()
+        db.table("articles").update(
+            {"status": "pending", "retry_count": retry_count}
+        ).eq("id", article["id"]).execute()
 
 
 def _now() -> str:

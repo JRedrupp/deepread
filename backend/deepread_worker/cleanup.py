@@ -1,9 +1,11 @@
-"""Server-side retention policy for the shared `articles` cache and its Storage bucket.
+"""Server-side maintenance pass for the shared `articles` cache and its Storage bucket.
 
-Three independent, individually-gated phases, run periodically by `_cleanup_loop`
-in main.py, or once via:
+Four phases, run periodically by `_cleanup_loop` in main.py, or once via:
 
     python -m deepread_worker.cleanup [--dry-run]
+
+The first three are individually gated by settings; the fourth (stale render-claim
+reclaim) is unconditional.
 
 1. Tier one (article_retention_days): a `ready` article's rendered zip is removed
    from Storage once it's old enough, and its `storage_path` is set to null. The
@@ -19,6 +21,14 @@ in main.py, or once via:
    not referenced by any current row's storage_path — self-healing against the
    renderer's upload-before-row-update crash race, a feed-delete FK cascade
    orphaning its articles' objects, or a failed removal in tier one above.
+4. Stale render-claim reclaim (list_stale_claims/reclaim_stale_claims): resets
+   `rendering` rows whose `claimed_at` is older than stale_claim_minutes (or
+   still null) back to `pending`, or to `failed` once retry_count has hit
+   render_max_retries. Recovers rows abandoned by a crashed worker or a render
+   failure that never got to `_mark_retry_or_failed`. Always runs, unlike the
+   phases above — an abandoned claim blocks that article from ever being
+   retried, so reclaiming it isn't an optional storage-hygiene policy the way
+   the other three are.
 
 Every mutation updates/deletes the row strictly before touching the Storage
 object, never after — this is what keeps mobile sync out of a permanent retry
@@ -56,6 +66,13 @@ def build_expired_or_filter(cutoff: datetime) -> str:
     before the cutoff, or with no published_at at all but created before it."""
     cutoff_iso = cutoff.isoformat()
     return f"published_at.lt.{cutoff_iso},and(published_at.is.null,created_at.lt.{cutoff_iso})"
+
+
+def build_stale_claim_filter(cutoff: datetime) -> str:
+    """Nulls-included: a row claimed before this column existed (or by a claim
+    update that itself failed to persist claimed_at) must count as stale
+    immediately, not survive forever unreclaimed."""
+    return f"claimed_at.is.null,claimed_at.lt.{cutoff.isoformat()}"
 
 
 def filter_zip_candidates(rows: list[dict]) -> list[dict]:
@@ -146,6 +163,36 @@ def list_hard_delete_candidates(db: Client, settings: Settings) -> list[dict]:
         .execute()
     )
     return rows(result.data)
+
+
+def list_stale_claims(db: Client, settings: Settings) -> list[dict]:
+    cutoff = datetime.now(UTC) - timedelta(minutes=settings.stale_claim_minutes)
+    result = (
+        db.table("articles")
+        .select("id, retry_count")
+        .eq("status", "rendering")
+        .or_(build_stale_claim_filter(cutoff))
+        .limit(settings.cleanup_batch_size)
+        .execute()
+    )
+    return rows(result.data)
+
+
+def reclaim_stale_claims(db: Client, settings: Settings, candidates: list[dict]) -> None:
+    for c in candidates:
+        retry_count = c["retry_count"] + 1
+        if retry_count >= settings.render_max_retries:
+            db.table("articles").update(
+                {
+                    "status": "failed",
+                    "retry_count": retry_count,
+                    "failure_reason": "stale_claim_max_retries",
+                }
+            ).eq("id", c["id"]).execute()
+        else:
+            db.table("articles").update(
+                {"status": "pending", "retry_count": retry_count, "claimed_at": None}
+            ).eq("id", c["id"]).execute()
 
 
 def hard_delete_articles(db: Client, settings: Settings, candidates: list[dict]) -> None:
@@ -250,6 +297,10 @@ async def run_cleanup_pass(db: Client, settings: Settings) -> None:
             if orphans:
                 await asyncio.to_thread(remove_storage_objects, db, settings, orphans)
 
+    stale_claims = await asyncio.to_thread(list_stale_claims, db, settings)
+    if stale_claims:
+        await asyncio.to_thread(reclaim_stale_claims, db, settings, stale_claims)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -294,6 +345,11 @@ def main() -> None:
             print(f"Would remove {len(orphans)} orphaned Storage object(s)")
             for name in orphans[:20]:
                 print(f"  {name}")
+
+    stale_claims = list_stale_claims(db, settings)
+    print(f"Would reclaim {len(stale_claims)} stale 'rendering' claim(s)")
+    for c in stale_claims[:20]:
+        print(f"  {c['id']}  retry_count={c['retry_count']}")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,10 @@ class Settings:
     # Never reap a Storage object younger than this, to avoid racing an in-flight
     # upload for a brand-new article (renderer.py uploads before updating the row).
     orphan_grace_period_hours: int = 24
+    # How long a row can sit in status='rendering' before the cleanup sweep
+    # assumes the claiming process died (or lost the claim mid-render without
+    # recording it) and reclaims the row. See deepread_worker.cleanup.
+    stale_claim_minutes: int = 30
 
     @staticmethod
     def _env_int(name: str, default: int) -> int:
@@ -56,4 +60,5 @@ class Settings:
             cleanup_batch_size=cls._env_int("CLEANUP_BATCH_SIZE", 200),
             orphan_sweep_enabled=cls._env_bool("ORPHAN_SWEEP_ENABLED", True),
             orphan_grace_period_hours=cls._env_int("ORPHAN_GRACE_PERIOD_HOURS", 24),
+            stale_claim_minutes=cls._env_int("STALE_CLAIM_MINUTES", 30),
         )
