@@ -1,9 +1,11 @@
-"""Server-side retention policy for the shared `articles` cache and its Storage bucket.
+"""Server-side maintenance pass for the shared `articles` cache and its Storage bucket.
 
-Three independent, individually-gated phases, run periodically by `_cleanup_loop`
-in main.py, or once via:
+Four phases, run periodically by `_cleanup_loop` in main.py, or once via:
 
     python -m deepread_worker.cleanup [--dry-run]
+
+The first three are individually gated by settings; the fourth (stale render-claim
+reclaim) is unconditional.
 
 1. Tier one (article_retention_days): a `ready` article's rendered zip is removed
    from Storage once it's old enough, and its `storage_path` is set to null. The
@@ -19,6 +21,14 @@ in main.py, or once via:
    not referenced by any current row's storage_path — self-healing against the
    renderer's upload-before-row-update crash race, a feed-delete FK cascade
    orphaning its articles' objects, or a failed removal in tier one above.
+4. Stale render-claim reclaim (list_stale_claims/reclaim_stale_claims): resets
+   `rendering` rows whose `claimed_at` is older than stale_claim_minutes (or
+   still null) back to `pending`, or to `failed` once retry_count has hit
+   render_max_retries. Recovers rows abandoned by a crashed worker or a render
+   failure that never got to `_mark_retry_or_failed`. Always runs, unlike the
+   phases above — an abandoned claim blocks that article from ever being
+   retried, so reclaiming it isn't an optional storage-hygiene policy the way
+   the other three are.
 
 Every mutation updates/deletes the row strictly before touching the Storage
 object, never after — this is what keeps mobile sync out of a permanent retry

@@ -64,7 +64,8 @@ Two independent asyncio loops started from `main.py`, sharing one Supabase servi
 Redis/dedicated queue exists (see TECH_DEBT.md). The `pending`→`rendering` transition in
 `_render_one` is a conditional update (`.eq("status", "pending")`) used as an optimistic lock so
 two worker replicas can't double-render the same article; a crash mid-render leaves a row stuck in
-`rendering` forever (no sweep exists yet).
+`rendering` until `cleanup.py`'s stale-claim sweep reclaims it (gated by the `claimed_at` column
+and `stale_claim_minutes`, not by a settings on/off flag — see TECH_DEBT.md).
 
 Per-article render pipeline in `_render_one`:
 1. `robots.py` — check the target host's robots.txt (cached in-process via `lru_cache` per host)
