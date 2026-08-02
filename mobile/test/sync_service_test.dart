@@ -192,6 +192,38 @@ void main() {
     });
   });
 
+  group('syncFeedRows', () {
+    late AppDatabase db;
+
+    setUp(() => db = AppDatabase.forTesting(NativeDatabase.memory()));
+    tearDown(() => db.close());
+
+    test('inserts the local row and marks pendingFullFetch for a feed not seen before', () async {
+      await syncFeedRows(db, [
+        {'id': 'feed-1', 'url': 'https://example.com/feed', 'title': 'Example'},
+      ]);
+
+      expect(await hasPendingFullFetch(db), isTrue);
+      final stored = await (db.select(db.localFeeds)..where((f) => f.id.equals('feed-1'))).getSingle();
+      expect(stored.url, 'https://example.com/feed');
+      expect(stored.title, 'Example');
+    });
+
+    test('updates an already-known feed row without marking pendingFullFetch', () async {
+      await db.into(db.localFeeds).insert(
+            LocalFeedsCompanion.insert(id: 'feed-1', url: 'https://example.com/feed'),
+          );
+
+      await syncFeedRows(db, [
+        {'id': 'feed-1', 'url': 'https://example.com/feed', 'title': 'New Title'},
+      ]);
+
+      expect(await hasPendingFullFetch(db), isFalse);
+      final stored = await (db.select(db.localFeeds)..where((f) => f.id.equals('feed-1'))).getSingle();
+      expect(stored.title, 'New Title');
+    });
+  });
+
   group('SyncService.syncArticles', () {
     late AppDatabase db;
     late Directory docsDir;
@@ -736,6 +768,72 @@ void main() {
       final stored = await (db.select(db.localArticles)..where((a) => a.id.equals('a'))).getSingle();
       expect(stored.renderedAt, '2026-01-01T00:00:00Z');
       expect(stored.localPath, 'articles/a');
+    });
+
+    test('a feed first detected via syncFeedRows survives a failed forced pass and still '
+        'forces a full fetch on retry, instead of being stranded once the local row exists',
+        () async {
+      // Clear the feed that was inserted by setUp, so we can test the
+      // "first detection" scenario with a fresh feed.
+      await (db.delete(db.localFeeds)..where((f) => f.id.equals('feed-1'))).go();
+
+      // Other feeds' prior successful syncs already advanced the watermark
+      // well past this (about to be newly-subscribed-elsewhere) feed's
+      // already-rendered back catalog.
+      await db.into(db.syncState).insertOnConflictUpdate(
+            SyncStateCompanion.insert(
+              id: const Value(0),
+              articlesRenderedThrough: const Value('2026-06-01T00:00:00Z'),
+            ),
+          );
+
+      // Pass 1 — mirrors syncNow: _syncFeeds sees a feed not yet known
+      // locally and marks the flag via syncFeedRows.
+      await syncFeedRows(db, [
+        {'id': 'feed-1', 'url': 'https://example.com/feed', 'title': null},
+      ]);
+      expect(await hasPendingFullFetch(db), isTrue);
+
+      final failingService = SyncService(
+        db,
+        fetchReadyArticles: ({String? since, required int limit}) async => [
+          _articleRow(id: 'old-a', renderedAt: '2026-01-01T00:00:00Z', storagePath: 'old-a.zip'),
+        ],
+        downloadArticleZip: (_) async => throw StateError('network failure'),
+      );
+      // Mirrors syncNow: forceFullFetch is read from the persisted flag,
+      // and clearPendingFullFetch is only reached on the line after this
+      // call — which never runs here, since syncArticles throws.
+      await expectLater(
+        failingService.syncArticles(forceFullFetch: await hasPendingFullFetch(db)),
+        throwsStateError,
+      );
+
+      // Pass 2 — the feed row now exists locally (syncFeedRows upserted it
+      // in pass 1 regardless of the article download failure), so a fresh
+      // "is this feed new" comparison would no longer see it as new. That
+      // was the bug: the persisted flag from pass 1 must be what survives
+      // here instead.
+      await syncFeedRows(db, [
+        {'id': 'feed-1', 'url': 'https://example.com/feed', 'title': null},
+      ]);
+      final pendingFullFetch = await hasPendingFullFetch(db);
+      expect(pendingFullFetch, isTrue, reason: 'the failed pass must not have lost the retry signal');
+
+      String? requestedSince = 'not called';
+      final retryService = SyncService(
+        db,
+        fetchReadyArticles: ({String? since, required int limit}) async {
+          requestedSince = since;
+          return [];
+        },
+        downloadArticleZip: (_) async => throw StateError('unused'),
+      );
+      await retryService.syncArticles(forceFullFetch: pendingFullFetch);
+
+      expect(requestedSince, isNull,
+          reason: 'the back catalog must still be retried with an unwatermarked fetch, not '
+              'silently scoped to the pre-existing watermark');
     });
   });
 }
