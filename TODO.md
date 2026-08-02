@@ -39,6 +39,7 @@ Everything below this section is genuinely deferred/out-of-scope for the MVP, no
 ## Tooling
 
 - [ ] PR-time migration validation against a shadow/staging Supabase project (e.g. `supabase db diff`/`db push --dry-run` in `ci.yml`) — deliberately deferred when migrations were automated in `release.yml`, since it needs a second Supabase project that doesn't exist yet.
+- [ ] **`backend/` has no dependency lock file.** `pyproject.toml` only specifies version ranges (`playwright>=1.48`, etc.) and `make backend-venv`/the Dockerfile both resolve fresh via `pip install -e ".[dev]"` — so a transitive dependency bump upstream can change what actually ships to prod (`make backend-deploy`) with no corresponding commit in this repo, and there's no way to reproduce exactly what was deployed on a given date. Worth adding `uv` + a committed `uv.lock`, with the Dockerfile/Makefile switched to `uv sync`.
 
 ## Business
 
