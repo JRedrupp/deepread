@@ -164,7 +164,7 @@ class SyncService {
     this.downloadArticleZip = _defaultDownloadArticleZip,
     this.recordLastSynced = _defaultRecordLastSynced,
     this.applyRetentionPolicy = _defaultApplyRetentionPolicy,
-    this.pageSize = 1000,
+    this.pageSize = 500,
   });
 
   final AppDatabase db;
@@ -173,13 +173,23 @@ class SyncService {
   final Future<void> Function(DateTime time) recordLastSynced;
   final Future<void> Function(AppDatabase db) applyRetentionPolicy;
 
-  /// Max rows requested per `fetchReadyArticles` call. Defaults to
-  /// Supabase's own PostgREST `max_rows` cap (`supabase/config.toml`) so a
-  /// single page request is never silently truncated below what we asked
-  /// for. `syncArticles` pages through as many calls as it takes to reach
-  /// a page shorter than this, so raising/lowering it only changes the
-  /// number of round trips per pass, not correctness. Overridable in tests
-  /// to exercise multi-page behavior without huge fixtures.
+  /// Max rows requested per `fetchReadyArticles` call. `syncArticles`
+  /// pages through as many calls as it takes to reach a page shorter than
+  /// this, and treats a short page as proof the backlog is exhausted — so
+  /// this value must stay safely *below* Supabase's PostgREST `max_rows`
+  /// cap, never equal to it. Local dev's cap is 1000 (`supabase/config.toml`),
+  /// but the hosted project's `max_rows` lives in the dashboard, outside
+  /// this repo, and can drift independently. If `pageSize` ever matched
+  /// (or exceeded) the server's actual cap, every page would come back
+  /// silently truncated at that lower cap — always shorter than the
+  /// `pageSize` we asked for — so the short-page termination check below
+  /// would fire after page 1 even though more rows exist, and the
+  /// watermark would advance past rows that were never fetched: permanent
+  /// data loss, the exact bug this branch exists to fix. 500 matches the
+  /// backend's own precedent for this exact pattern — see
+  /// `backend/deepread_worker/cleanup.py`'s `_LIVE_PATHS_PAGE_SIZE`.
+  /// Overridable in tests to exercise multi-page behavior without huge
+  /// fixtures.
   final int pageSize;
 
   Future<void> syncNow() async {
@@ -323,8 +333,18 @@ class SyncService {
       // see the comment on `fetchCursor` above. The backend always sets
       // rendered_at on a ready article (same invariant
       // decideArticleSyncAction leans on), so rows.last.renderedAt is
-      // reliably non-null here whenever rows is non-empty.
-      if (rows.isNotEmpty) fetchCursor = rows.last.renderedAt;
+      // reliably non-null here whenever rows is non-empty. Guarded anyway:
+      // if it somehow were null on a full page, setting fetchCursor to
+      // null would make the next fetch's `since` null too, which fetches
+      // from the very beginning and spins on the same full page forever
+      // instead of making progress — break instead, consistent with
+      // decideArticleSyncAction's own defensive handling of this same
+      // "should never happen" case elsewhere in this file.
+      if (rows.isNotEmpty) {
+        final lastRenderedAt = rows.last.renderedAt;
+        if (lastRenderedAt == null) break;
+        fetchCursor = lastRenderedAt;
+      }
 
       // A page shorter than pageSize means the backlog is exhausted.
       if (rows.length < pageSize) break;

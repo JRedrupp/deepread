@@ -334,31 +334,36 @@ void main() {
       }
     });
 
-    test('a failure on page 1 still lets page 2 get fetched, but the watermark '
-        'does not advance at all', () async {
+    test('a failure on the last row of page 1 still advances the fetch cursor past it '
+        'to reach page 2, but the watermark does not advance at all', () async {
       final allRows = [
-        _articleRow(id: 'a', renderedAt: '2026-01-01T00:00:00Z', storagePath: 'a.zip'),
-        _articleRow(id: 'b', renderedAt: '2026-01-02T00:00:00Z'),
+        _articleRow(id: 'a', renderedAt: '2026-01-01T00:00:00Z'),
+        _articleRow(id: 'b', renderedAt: '2026-01-02T00:00:00Z', storagePath: 'b.zip'),
         _articleRow(id: 'c', renderedAt: '2026-01-03T00:00:00Z'),
       ];
       final backend = _fakeBackend(allRows);
-      var fetchCallCount = 0;
+      final requestedSinceValues = <String?>[];
       final service = SyncService(
         db,
         pageSize: 2,
         fetchReadyArticles: ({String? since, required int limit}) async {
-          fetchCallCount++;
+          requestedSinceValues.add(since);
           return backend(since: since, limit: limit);
         },
         downloadArticleZip: (storagePath) async {
-          if (storagePath == 'a.zip') throw StateError('network failure');
+          if (storagePath == 'b.zip') throw StateError('network failure');
           return _fakeZip();
         },
       );
 
       await expectLater(service.syncArticles(), throwsStateError);
 
-      expect(fetchCallCount, 2, reason: 'page 2 must still be fetched despite page 1 having a failure');
+      // Proves the fetch cursor advanced to b's rendered_at (the last
+      // *fetched* row of page 1) rather than staying at a's rendered_at
+      // (the watermark, which only tracks the last *successful* row) —
+      // a buggy implementation that used the watermark as the next page's
+      // cursor would re-fetch page 1 forever instead of reaching page 2.
+      expect(requestedSinceValues, [null, '2026-01-02T00:00:00Z']);
       final storedC =
           await (db.select(db.localArticles)..where((a) => a.id.equals('c'))).getSingleOrNull();
       expect(storedC, isNotNull, reason: 'article c on page 2 should still have synced');
