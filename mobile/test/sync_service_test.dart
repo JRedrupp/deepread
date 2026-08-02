@@ -48,6 +48,44 @@ RemoteArticleRow _remote({
   });
 }
 
+/// Raw PostgREST-shaped row, for tests that exercise `fetchReadyArticles`
+/// directly (as opposed to `_remote`, which builds an already-parsed
+/// `RemoteArticleRow` for `decideArticleSyncAction` tests).
+Map<String, dynamic> _articleRow({
+  required String id,
+  required String renderedAt,
+  String? storagePath,
+}) {
+  return {
+    'id': id,
+    'feed_id': 'feed-1',
+    'title': 'Title $id',
+    'byline': null,
+    'summary': storagePath == null ? 'a summary' : null,
+    'published_at': null,
+    'rendered_at': renderedAt,
+    'storage_path': storagePath,
+  };
+}
+
+/// Builds a `fetchReadyArticles`-shaped function backed by an in-memory
+/// list, mimicking the real backend's `.gt('rendered_at', since)`
+/// filter + `.order('rendered_at').limit(limit)` — so pagination tests can
+/// express intent as "here's the full backlog" without manually slicing
+/// pages themselves.
+Future<List<Map<String, dynamic>>> Function({String? since, required int limit}) _fakeBackend(
+  List<Map<String, dynamic>> allRows,
+) {
+  return ({String? since, required int limit}) async {
+    final filtered = (since == null
+            ? allRows
+            : allRows.where((r) => (r['rendered_at'] as String).compareTo(since) > 0))
+        .toList()
+      ..sort((a, b) => (a['rendered_at'] as String).compareTo(b['rendered_at'] as String));
+    return filtered.take(limit).toList();
+  };
+}
+
 Uint8List _fakeZip({String indexHtml = '<html></html>'}) {
   final archive = Archive();
   final data = utf8.encode(indexHtml);
@@ -190,7 +228,7 @@ void main() {
       String? requestedSince = 'not called';
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async {
+        fetchReadyArticles: ({String? since, required int limit}) async {
           requestedSince = since;
           return [
             {
@@ -229,7 +267,7 @@ void main() {
       String? requestedSince;
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async {
+        fetchReadyArticles: ({String? since, required int limit}) async {
           requestedSince = since;
           return [];
         },
@@ -252,7 +290,7 @@ void main() {
       String? requestedSince = 'not called';
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async {
+        fetchReadyArticles: ({String? since, required int limit}) async {
           requestedSince = since;
           return [];
         },
@@ -264,10 +302,127 @@ void main() {
       expect(requestedSince, isNull);
     });
 
+    test('a pass spanning exactly 2 pages fetches twice and advances the watermark '
+        'to the true max across both pages', () async {
+      final allRows = [
+        _articleRow(id: 'a', renderedAt: '2026-01-01T00:00:00Z'),
+        _articleRow(id: 'b', renderedAt: '2026-01-02T00:00:00Z'),
+        _articleRow(id: 'c', renderedAt: '2026-01-03T00:00:00Z'),
+      ];
+      final backend = _fakeBackend(allRows);
+      var fetchCallCount = 0;
+      final service = SyncService(
+        db,
+        pageSize: 2,
+        fetchReadyArticles: ({String? since, required int limit}) async {
+          fetchCallCount++;
+          return backend(since: since, limit: limit);
+        },
+        downloadArticleZip: (_) async => throw StateError('should not download a paywalled article'),
+      );
+
+      await service.syncArticles();
+
+      expect(fetchCallCount, 2);
+      final watermark =
+          await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingle();
+      expect(watermark.articlesRenderedThrough, '2026-01-03T00:00:00Z');
+      for (final id in ['a', 'b', 'c']) {
+        final stored =
+            await (db.select(db.localArticles)..where((a) => a.id.equals(id))).getSingleOrNull();
+        expect(stored, isNotNull, reason: 'article $id should have synced');
+      }
+    });
+
+    test('a failure on page 1 still lets page 2 get fetched, but the watermark '
+        'does not advance at all', () async {
+      final allRows = [
+        _articleRow(id: 'a', renderedAt: '2026-01-01T00:00:00Z', storagePath: 'a.zip'),
+        _articleRow(id: 'b', renderedAt: '2026-01-02T00:00:00Z'),
+        _articleRow(id: 'c', renderedAt: '2026-01-03T00:00:00Z'),
+      ];
+      final backend = _fakeBackend(allRows);
+      var fetchCallCount = 0;
+      final service = SyncService(
+        db,
+        pageSize: 2,
+        fetchReadyArticles: ({String? since, required int limit}) async {
+          fetchCallCount++;
+          return backend(since: since, limit: limit);
+        },
+        downloadArticleZip: (storagePath) async {
+          if (storagePath == 'a.zip') throw StateError('network failure');
+          return _fakeZip();
+        },
+      );
+
+      await expectLater(service.syncArticles(), throwsStateError);
+
+      expect(fetchCallCount, 2, reason: 'page 2 must still be fetched despite page 1 having a failure');
+      final storedC =
+          await (db.select(db.localArticles)..where((a) => a.id.equals('c'))).getSingleOrNull();
+      expect(storedC, isNotNull, reason: 'article c on page 2 should still have synced');
+      final watermark =
+          await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+      expect(watermark, isNull);
+    });
+
+    test('a failure on page 2 after page 1 succeeded still leaves the watermark unadvanced', () async {
+      final allRows = [
+        _articleRow(id: 'a', renderedAt: '2026-01-01T00:00:00Z'),
+        _articleRow(id: 'b', renderedAt: '2026-01-02T00:00:00Z'),
+        _articleRow(id: 'c', renderedAt: '2026-01-03T00:00:00Z', storagePath: 'c.zip'),
+      ];
+      final backend = _fakeBackend(allRows);
+      final service = SyncService(
+        db,
+        pageSize: 2,
+        fetchReadyArticles: ({String? since, required int limit}) => backend(since: since, limit: limit),
+        downloadArticleZip: (_) async => throw StateError('network failure'),
+      );
+
+      await expectLater(service.syncArticles(), throwsStateError);
+
+      final storedA =
+          await (db.select(db.localArticles)..where((a) => a.id.equals('a'))).getSingleOrNull();
+      expect(storedA, isNotNull, reason: 'page 1 rows should still have synced locally');
+      final watermark =
+          await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
+      expect(watermark, isNull);
+    });
+
+    test('a page returning fewer rows than pageSize stops the loop with no extra fetch call', () async {
+      var fetchCallCount = 0;
+      final service = SyncService(
+        db,
+        pageSize: 5,
+        fetchReadyArticles: ({String? since, required int limit}) async {
+          fetchCallCount++;
+          return [
+            {
+              'id': 'a',
+              'feed_id': 'feed-1',
+              'title': 'A',
+              'byline': null,
+              'summary': 'sum',
+              'published_at': null,
+              'rendered_at': '2026-01-01T00:00:00Z',
+              'storage_path': null,
+            },
+          ];
+        },
+        downloadArticleZip: (_) async => throw StateError('should not download a paywalled article'),
+      );
+
+      await service.syncArticles();
+
+      expect(fetchCallCount, 1);
+    });
+
     test('watermark does not advance if a row throws mid-pass', () async {
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -294,7 +449,7 @@ void main() {
     test('one failing article does not block others in the same pass, but the failure still surfaces', () async {
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -357,7 +512,7 @@ void main() {
 
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -401,7 +556,7 @@ void main() {
 
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -439,7 +594,7 @@ void main() {
       var downloadCalls = 0;
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -473,7 +628,7 @@ void main() {
       final settings = SettingsRepository(await SharedPreferences.getInstance());
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [],
+        fetchReadyArticles: ({String? since, required int limit}) async => [],
         downloadArticleZip: (_) async => throw StateError('unused'),
         recordLastSynced: settings.setLastSyncedAt,
       );
@@ -491,7 +646,7 @@ void main() {
       final settings = SettingsRepository(await SharedPreferences.getInstance());
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
@@ -530,7 +685,7 @@ void main() {
       final retention = RetentionService(db, articlesDir: Directory(p.join(docsDir.path, 'articles')));
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [],
+        fetchReadyArticles: ({String? since, required int limit}) async => [],
         downloadArticleZip: (_) async => throw StateError('unused'),
         applyRetentionPolicy: (_) => retention.applyAutoPolicy(expireReadAfterDays: 1),
       );
@@ -556,7 +711,7 @@ void main() {
 
       final service = SyncService(
         db,
-        fetchReadyArticles: ({since}) async => [
+        fetchReadyArticles: ({String? since, required int limit}) async => [
           {
             'id': 'a',
             'feed_id': 'feed-1',
