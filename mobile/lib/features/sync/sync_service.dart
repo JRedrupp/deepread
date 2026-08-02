@@ -132,6 +132,32 @@ Future<void> clearPendingFullFetch(AppDatabase db) async {
       .write(const SyncStateCompanion(needsFullFetch: Value(false)));
 }
 
+/// Upserts each remote feed row into [LocalFeeds], marking the durable
+/// [markPendingFullFetch] signal first for any feed not already known on
+/// this device. This is the counterpart to [FeedRepository.subscribe]'s own
+/// call to [markPendingFullFetch]: that path covers this device doing the
+/// subscribing, this one covers a subscription made on a *different*
+/// device that first shows up here via the `user_feed_subscriptions` pull.
+/// Marking before the local row is written (not after) matters: once the
+/// row exists, there is no other signal that this feed's back catalog was
+/// ever pending — see the design doc referenced in
+/// `docs/superpowers/specs/2026-08-02-force-full-fetch-retry-fix-design.md`.
+Future<void> syncFeedRows(AppDatabase db, List<Map<String, dynamic>> feeds) async {
+  final existingIds = (await db.select(db.localFeeds).get()).map((f) => f.id).toSet();
+
+  for (final feed in feeds) {
+    final feedId = feed['id'] as String;
+    if (!existingIds.contains(feedId)) await markPendingFullFetch(db);
+    await db.into(db.localFeeds).insertOnConflictUpdate(
+          LocalFeedsCompanion.insert(
+            id: feedId,
+            url: feed['url'] as String,
+            title: Value(feed['title'] as String?),
+          ),
+        );
+  }
+}
+
 Future<void> _defaultRecordLastSynced(DateTime time) async {
   final settings = await SettingsRepository.load();
   await settings.setLastSyncedAt(time);
@@ -196,21 +222,21 @@ class SyncService {
     final userId = AppSupabase.client.auth.currentUser?.id;
     if (userId == null) return;
 
-    final hasNewSubscription = await _syncFeeds(userId);
+    await _syncFeeds(userId);
     final pendingFullFetch = await hasPendingFullFetch(db);
     // A newly-subscribed feed's already-rendered back catalog predates the
     // current watermark (this is a *shared* rendering cache — a feed's
     // articles can have been rendered long before this user subscribed),
     // so a plain `.gt('rendered_at', since)` pass would permanently skip
-    // them. Fall back to a full fetch when either a subscription made on
-    // another device just showed up here for the first time
-    // (hasNewSubscription — caught by comparing against local feed rows),
-    // or this device itself just (re)subscribed via FeedRepository.subscribe
-    // (pendingFullFetch — that write happens before local feed rows can be
-    // compared, so hasNewSubscription alone never catches it). The old rows
-    // either pass has to re-examine all hit ArticleSyncAction.skip cheaply,
-    // so this is just a network-cost trade-off, not a correctness one.
-    await syncArticles(forceFullFetch: hasNewSubscription || pendingFullFetch);
+    // them. needsFullFetch is the single durable signal for this: set by
+    // syncFeedRows (above, via _syncFeeds) when a subscription made on
+    // another device first shows up here, or by FeedRepository.subscribe
+    // when this device does the subscribing. "Durable" is the whole point
+    // — it survives a failed pass (this line is skipped entirely if
+    // syncArticles below throws) rather than being derived fresh each pass
+    // from "is the feed row already in LocalFeeds", which stops working
+    // the moment that row gets written.
+    await syncArticles(forceFullFetch: pendingFullFetch);
 
     // Only clear once the full fetch above has actually completed — if it
     // threw, this line is never reached, so the signal survives for the
@@ -218,31 +244,17 @@ class SyncService {
     if (pendingFullFetch) await clearPendingFullFetch(db);
   }
 
-  /// Returns true if any feed in the response wasn't already present
-  /// locally (a new subscription this pass), so [syncNow] can decide
-  /// whether the article watermark is still safe to trust.
-  Future<bool> _syncFeeds(String userId) async {
+  /// Pulls the current subscription list and syncs local feed rows —
+  /// delegates the actual decision/write logic to [syncFeedRows] so that
+  /// logic can be unit-tested without touching [AppSupabase.client].
+  Future<void> _syncFeeds(String userId) async {
     final rows = await AppSupabase.client
         .from('user_feed_subscriptions')
         .select('feeds(id, url, title)')
         .eq('user_id', userId);
 
-    final existingIds = (await db.select(db.localFeeds).get()).map((f) => f.id).toSet();
-    var hasNewSubscription = false;
-
-    for (final row in rows as List) {
-      final feed = row['feeds'] as Map<String, dynamic>;
-      final feedId = feed['id'] as String;
-      if (!existingIds.contains(feedId)) hasNewSubscription = true;
-      await db.into(db.localFeeds).insertOnConflictUpdate(
-            LocalFeedsCompanion.insert(
-              id: feedId,
-              url: feed['url'] as String,
-              title: Value(feed['title'] as String?),
-            ),
-          );
-    }
-    return hasNewSubscription;
+    final feeds = (rows as List).map((row) => row['feeds'] as Map<String, dynamic>).toList();
+    await syncFeedRows(db, feeds);
   }
 
   /// Fetches and applies newly-`ready`/newly-re-rendered articles. Public
