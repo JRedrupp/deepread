@@ -90,7 +90,7 @@ ArticleSyncAction decideArticleSyncAction({
   return remote.storagePath == null ? ArticleSyncAction.insertPaywalled : ArticleSyncAction.download;
 }
 
-Future<List<Map<String, dynamic>>> _defaultFetchReadyArticles({String? since}) async {
+Future<List<Map<String, dynamic>>> _defaultFetchReadyArticles({String? since, required int limit}) async {
   // RLS on `articles` already scopes this to feeds the current user is
   // subscribed to — see supabase/migrations/0001_init.sql.
   var query = AppSupabase.client
@@ -98,7 +98,7 @@ Future<List<Map<String, dynamic>>> _defaultFetchReadyArticles({String? since}) a
       .select('id, feed_id, title, byline, summary, published_at, rendered_at, storage_path')
       .eq('status', 'ready');
   if (since != null) query = query.gt('rendered_at', since);
-  final rows = await query;
+  final rows = await query.order('rendered_at', ascending: true).limit(limit);
   return (rows as List).cast<Map<String, dynamic>>();
 }
 
@@ -106,11 +106,11 @@ Future<Uint8List> _defaultDownloadArticleZip(String storagePath) {
   return AppSupabase.client.storage.from('articles').download(storagePath);
 }
 
-/// Whether this device has a pending full-catalog fetch to do, set by
-/// [FeedRepository.subscribe] whenever it (re)subscribes to a feed on this
-/// device. See [SyncState.needsFullFetch] for why this exists as a
-/// separate signal from [SyncService]'s own newly-subscribed-elsewhere
-/// detection.
+/// Whether this device has a pending full-catalog fetch to do — the single
+/// durable signal for that, set by either [FeedRepository.subscribe] (this
+/// device doing the subscribing) or [SyncService]'s `syncFeedRows` (a
+/// subscription made on a *different* device first showing up here via
+/// sync). See [SyncState.needsFullFetch] for the full contract.
 Future<bool> hasPendingFullFetch(AppDatabase db) async {
   final state = await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
   return state?.needsFullFetch ?? false;
@@ -130,6 +130,32 @@ Future<void> markPendingFullFetch(AppDatabase db) async {
 Future<void> clearPendingFullFetch(AppDatabase db) async {
   await (db.update(db.syncState)..where((s) => s.id.equals(0)))
       .write(const SyncStateCompanion(needsFullFetch: Value(false)));
+}
+
+/// Upserts each remote feed row into [LocalFeeds], marking the durable
+/// [markPendingFullFetch] signal first for any feed not already known on
+/// this device. This is the counterpart to [FeedRepository.subscribe]'s own
+/// call to [markPendingFullFetch]: that path covers this device doing the
+/// subscribing, this one covers a subscription made on a *different*
+/// device that first shows up here via the `user_feed_subscriptions` pull.
+/// Marking before the local row is written (not after) matters: once the
+/// row exists, there is no other signal that this feed's back catalog was
+/// ever pending — see the design doc referenced in
+/// `docs/superpowers/specs/2026-08-02-force-full-fetch-retry-fix-design.md`.
+Future<void> syncFeedRows(AppDatabase db, List<Map<String, dynamic>> feeds) async {
+  final existingIds = (await db.select(db.localFeeds).get()).map((f) => f.id).toSet();
+
+  for (final feed in feeds) {
+    final feedId = feed['id'] as String;
+    if (!existingIds.contains(feedId)) await markPendingFullFetch(db);
+    await db.into(db.localFeeds).insertOnConflictUpdate(
+          LocalFeedsCompanion.insert(
+            id: feedId,
+            url: feed['url'] as String,
+            title: Value(feed['title'] as String?),
+          ),
+        );
+  }
 }
 
 Future<void> _defaultRecordLastSynced(DateTime time) async {
@@ -164,33 +190,53 @@ class SyncService {
     this.downloadArticleZip = _defaultDownloadArticleZip,
     this.recordLastSynced = _defaultRecordLastSynced,
     this.applyRetentionPolicy = _defaultApplyRetentionPolicy,
+    this.pageSize = 500,
   });
 
   final AppDatabase db;
-  final Future<List<Map<String, dynamic>>> Function({String? since}) fetchReadyArticles;
+  final Future<List<Map<String, dynamic>>> Function({String? since, required int limit}) fetchReadyArticles;
   final Future<Uint8List> Function(String storagePath) downloadArticleZip;
   final Future<void> Function(DateTime time) recordLastSynced;
   final Future<void> Function(AppDatabase db) applyRetentionPolicy;
+
+  /// Max rows requested per `fetchReadyArticles` call. `syncArticles`
+  /// pages through as many calls as it takes to reach a page shorter than
+  /// this, and treats a short page as proof the backlog is exhausted — so
+  /// this value must stay safely *below* Supabase's PostgREST `max_rows`
+  /// cap, never equal to it. Local dev's cap is 1000 (`supabase/config.toml`),
+  /// but the hosted project's `max_rows` lives in the dashboard, outside
+  /// this repo, and can drift independently. If `pageSize` ever matched
+  /// (or exceeded) the server's actual cap, every page would come back
+  /// silently truncated at that lower cap — always shorter than the
+  /// `pageSize` we asked for — so the short-page termination check below
+  /// would fire after page 1 even though more rows exist, and the
+  /// watermark would advance past rows that were never fetched: permanent
+  /// data loss, the exact bug this branch exists to fix. 500 matches the
+  /// backend's own precedent for this exact pattern — see
+  /// `backend/deepread_worker/cleanup.py`'s `_LIVE_PATHS_PAGE_SIZE`.
+  /// Overridable in tests to exercise multi-page behavior without huge
+  /// fixtures.
+  final int pageSize;
 
   Future<void> syncNow() async {
     final userId = AppSupabase.client.auth.currentUser?.id;
     if (userId == null) return;
 
-    final hasNewSubscription = await _syncFeeds(userId);
+    await _syncFeeds(userId);
     final pendingFullFetch = await hasPendingFullFetch(db);
     // A newly-subscribed feed's already-rendered back catalog predates the
     // current watermark (this is a *shared* rendering cache — a feed's
     // articles can have been rendered long before this user subscribed),
     // so a plain `.gt('rendered_at', since)` pass would permanently skip
-    // them. Fall back to a full fetch when either a subscription made on
-    // another device just showed up here for the first time
-    // (hasNewSubscription — caught by comparing against local feed rows),
-    // or this device itself just (re)subscribed via FeedRepository.subscribe
-    // (pendingFullFetch — that write happens before local feed rows can be
-    // compared, so hasNewSubscription alone never catches it). The old rows
-    // either pass has to re-examine all hit ArticleSyncAction.skip cheaply,
-    // so this is just a network-cost trade-off, not a correctness one.
-    await syncArticles(forceFullFetch: hasNewSubscription || pendingFullFetch);
+    // them. needsFullFetch is the single durable signal for this: set by
+    // syncFeedRows (above, via _syncFeeds) when a subscription made on
+    // another device first shows up here, or by FeedRepository.subscribe
+    // when this device does the subscribing. "Durable" is the whole point
+    // — it survives a failed pass (this line is skipped entirely if
+    // syncArticles below throws) rather than being derived fresh each pass
+    // from "is the feed row already in LocalFeeds", which stops working
+    // the moment that row gets written.
+    await syncArticles(forceFullFetch: pendingFullFetch);
 
     // Only clear once the full fetch above has actually completed — if it
     // threw, this line is never reached, so the signal survives for the
@@ -198,31 +244,17 @@ class SyncService {
     if (pendingFullFetch) await clearPendingFullFetch(db);
   }
 
-  /// Returns true if any feed in the response wasn't already present
-  /// locally (a new subscription this pass), so [syncNow] can decide
-  /// whether the article watermark is still safe to trust.
-  Future<bool> _syncFeeds(String userId) async {
+  /// Pulls the current subscription list and syncs local feed rows —
+  /// delegates the actual decision/write logic to [syncFeedRows] so that
+  /// logic can be unit-tested without touching [AppSupabase.client].
+  Future<void> _syncFeeds(String userId) async {
     final rows = await AppSupabase.client
         .from('user_feed_subscriptions')
         .select('feeds(id, url, title)')
         .eq('user_id', userId);
 
-    final existingIds = (await db.select(db.localFeeds).get()).map((f) => f.id).toSet();
-    var hasNewSubscription = false;
-
-    for (final row in rows as List) {
-      final feed = row['feeds'] as Map<String, dynamic>;
-      final feedId = feed['id'] as String;
-      if (!existingIds.contains(feedId)) hasNewSubscription = true;
-      await db.into(db.localFeeds).insertOnConflictUpdate(
-            LocalFeedsCompanion.insert(
-              id: feedId,
-              url: feed['url'] as String,
-              title: Value(feed['title'] as String?),
-            ),
-          );
-    }
-    return hasNewSubscription;
+    final feeds = (rows as List).map((row) => row['feeds'] as Map<String, dynamic>).toList();
+    await syncFeedRows(db, feeds);
   }
 
   /// Fetches and applies newly-`ready`/newly-re-rendered articles. Public
@@ -233,19 +265,40 @@ class SyncService {
   /// [forceFullFetch] ignores the stored watermark for this pass (still
   /// updating it from whatever's fetched) — see the call site in
   /// [syncNow] for why a new feed subscription requires this.
+  ///
+  /// Pages through `fetchReadyArticles` (each call capped at [pageSize])
+  /// until a page comes back shorter than [pageSize], so this traverses
+  /// the entire backlog matching `since` regardless of how many rows that
+  /// is — not just whatever PostgREST's own row cap would return from a
+  /// single unpaginated query.
   Future<void> syncArticles({bool forceFullFetch = false}) async {
     final watermarkRow = forceFullFetch
         ? null
         : await (db.select(db.syncState)..where((s) => s.id.equals(0))).getSingleOrNull();
     final since = watermarkRow?.articlesRenderedThrough;
 
-    final rawRows = await fetchReadyArticles(since: since);
-    final rows = rawRows.map(RemoteArticleRow.fromRow).toList();
+    // `fetchCursor` drives `since` for the *next page fetch only* and
+    // always advances to the last fetched row's rendered_at, even if some
+    // rows in that page failed to process below — otherwise a mid-page
+    // failure would leave this pass re-fetching the same page forever
+    // instead of reaching the rest of the backlog. `newWatermark` (the
+    // value actually persisted, see below) is the one gated on
+    // failureCount across the WHOLE multi-page pass.
+    //
+    // Accepted edge case: if two different articles shared the exact same
+    // rendered_at (a Postgres timestamptz set once via now() at render
+    // completion), one landing exactly on a page boundary could in theory
+    // be skipped by the next page's `.gt('rendered_at', fetchCursor)`.
+    // Not guarded against — considered practically unobservable given
+    // real-world render timing, even under render_concurrency > 1 — see
+    // docs/superpowers/specs/2026-08-02-sync-pagination-fix-design.md.
+    String? fetchCursor = since;
 
-    // Newest rendered_at observed this pass — becomes the new watermark,
-    // but only once every row below has been handled without throwing.
-    // Each row's I/O is isolated (a bad zip/network/disk failure on one
-    // article doesn't stop the rest of the batch from syncing), but if
+    // Newest rendered_at observed this pass across every page — becomes
+    // the new watermark, but only once every row across every page has
+    // been handled without throwing. Each row's I/O is isolated (a bad
+    // zip/network/disk failure on one article doesn't stop the rest of the
+    // batch — or the rest of the backlog's pages — from syncing), but if
     // *any* row failed, the watermark must still NOT advance: the next
     // pass re-fetches the same `since` window and retries. That's safe and
     // cheap, since already-handled rows in that window will just hit
@@ -255,33 +308,58 @@ class SyncService {
     String? newWatermark = since;
     var failureCount = 0;
 
-    for (final remote in rows) {
-      final local = await (db.select(db.localArticles)..where((a) => a.id.equals(remote.id)))
-          .getSingleOrNull();
+    while (true) {
+      final rawRows = await fetchReadyArticles(since: fetchCursor, limit: pageSize);
+      final rows = rawRows.map(RemoteArticleRow.fromRow).toList();
 
-      try {
-        switch (decideArticleSyncAction(remote: remote, local: local)) {
-          case ArticleSyncAction.skip:
-            break;
-          case ArticleSyncAction.backfillRenderedAt:
-            await (db.update(db.localArticles)..where((a) => a.id.equals(remote.id)))
-                .write(LocalArticlesCompanion(renderedAt: Value(remote.renderedAt)));
-          case ArticleSyncAction.insertPaywalled:
-            await _insertPaywalledArticle(remote);
-          case ArticleSyncAction.download:
-            await _downloadAndStore(remote);
+      for (final remote in rows) {
+        final local = await (db.select(db.localArticles)..where((a) => a.id.equals(remote.id)))
+            .getSingleOrNull();
+
+        try {
+          switch (decideArticleSyncAction(remote: remote, local: local)) {
+            case ArticleSyncAction.skip:
+              break;
+            case ArticleSyncAction.backfillRenderedAt:
+              await (db.update(db.localArticles)..where((a) => a.id.equals(remote.id)))
+                  .write(LocalArticlesCompanion(renderedAt: Value(remote.renderedAt)));
+            case ArticleSyncAction.insertPaywalled:
+              await _insertPaywalledArticle(remote);
+            case ArticleSyncAction.download:
+              await _downloadAndStore(remote);
+          }
+        } catch (e) {
+          log('Failed to sync article ${remote.id}: $e', name: 'SyncService');
+          failureCount++;
+          continue;
         }
-      } catch (e) {
-        log('Failed to sync article ${remote.id}: $e', name: 'SyncService');
-        failureCount++;
-        continue;
+
+        final rowRenderedAt = remote.renderedAt;
+        if (rowRenderedAt != null &&
+            (newWatermark == null || DateTime.parse(rowRenderedAt).isAfter(DateTime.parse(newWatermark)))) {
+          newWatermark = rowRenderedAt;
+        }
       }
 
-      final rowRenderedAt = remote.renderedAt;
-      if (rowRenderedAt != null &&
-          (newWatermark == null || DateTime.parse(rowRenderedAt).isAfter(DateTime.parse(newWatermark)))) {
-        newWatermark = rowRenderedAt;
+      // Advance the pagination cursor regardless of any failures above —
+      // see the comment on `fetchCursor` above. The backend always sets
+      // rendered_at on a ready article (same invariant
+      // decideArticleSyncAction leans on), so rows.last.renderedAt is
+      // reliably non-null here whenever rows is non-empty. Guarded anyway:
+      // if it somehow were null on a full page, setting fetchCursor to
+      // null would make the next fetch's `since` null too, which fetches
+      // from the very beginning and spins on the same full page forever
+      // instead of making progress — break instead, consistent with
+      // decideArticleSyncAction's own defensive handling of this same
+      // "should never happen" case elsewhere in this file.
+      if (rows.isNotEmpty) {
+        final lastRenderedAt = rows.last.renderedAt;
+        if (lastRenderedAt == null) break;
+        fetchCursor = lastRenderedAt;
       }
+
+      // A page shorter than pageSize means the backlog is exhausted.
+      if (rows.length < pageSize) break;
     }
 
     if (failureCount == 0 && newWatermark != since) {
@@ -290,6 +368,14 @@ class SyncService {
       // from an INSERT, ignoring the column's SQL-level DEFAULT — so
       // omitting id here would silently insert a new row every sync pass
       // instead of upserting the singleton row this table reads (id=0).
+      //
+      // Only reached once every page in this pass processed cleanly, so
+      // if the process is killed mid-pass (e.g. the background
+      // WorkManager isolate hitting an OS execution time limit), this
+      // line simply never runs — nothing here to corrupt. Rows already
+      // downloaded stay on disk with their renderedAt already recorded
+      // locally, so the next pass re-fetching from the same `since` just
+      // skips them again cheaply via ArticleSyncAction.skip.
       await db.into(db.syncState).insertOnConflictUpdate(
             SyncStateCompanion.insert(id: const Value(0), articlesRenderedThrough: Value(newWatermark)),
           );

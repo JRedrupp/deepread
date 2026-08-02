@@ -32,15 +32,18 @@ class FeedRepository {
       if (e.code != '23505') rethrow;
     }
 
+    // Mark before writing the local row below, not after: SyncService's
+    // own newly-subscribed-elsewhere detection (syncFeedRows) treats a
+    // feed as "already known" the moment its LocalFeeds row exists, so if
+    // the process died between these two calls in the old order, the flag
+    // would never get set and this back catalog would be stranded exactly
+    // like the bug this ordering fixes on the other detection path — see
+    // docs/superpowers/specs/2026-08-02-force-full-fetch-retry-fix-design.md.
+    await markPendingFullFetch(db);
+
     await db.into(db.localFeeds).insertOnConflictUpdate(
           LocalFeedsCompanion.insert(id: feedId, url: url),
         );
-
-    // This write lands before the next sync pass ever compares local feed
-    // rows, so SyncService's own newly-subscribed-elsewhere detection would
-    // never catch this (re)subscription — mark it explicitly instead. See
-    // markPendingFullFetch's doc comment.
-    await markPendingFullFetch(db);
   }
 
   /// Removes the current user's subscription and this device's downloaded

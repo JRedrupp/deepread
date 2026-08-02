@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from deepread_worker.cleanup import (
     build_expired_or_filter,
+    build_stale_claim_filter,
     compute_cutoff,
     expire_articles,
     filter_hard_delete_candidates,
@@ -11,6 +12,7 @@ from deepread_worker.cleanup import (
     has_suspicious_empty_live_set,
     is_managed_object_name,
     list_live_storage_paths,
+    reclaim_stale_claims,
 )
 from deepread_worker.config import Settings
 
@@ -134,6 +136,9 @@ class _FakeTable:
     def in_(self, column: str, values: list) -> "_FakeTable":
         return self
 
+    def eq(self, column: str, value) -> "_FakeTable":
+        return self
+
     def execute(self):
         self._client.calls.append(("table_update", self._name, self._payload))
         return SimpleNamespace(data=[])
@@ -206,3 +211,41 @@ def test_list_live_storage_paths_does_not_truncate_beyond_one_page():
     result = list_live_storage_paths(client, settings, page_size=2)
 
     assert result == set(paths)
+
+
+def test_build_stale_claim_filter_format():
+    cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+    cutoff_iso = cutoff.isoformat()
+    assert build_stale_claim_filter(cutoff) == f"claimed_at.is.null,claimed_at.lt.{cutoff_iso}"
+
+
+def test_reclaim_stale_claims_resets_to_pending_when_retries_remain():
+    client = _RecordingClient()
+    settings = Settings(
+        supabase_url="http://x", supabase_service_role_key="key", render_max_retries=3
+    )
+    candidates = [{"id": "abc", "retry_count": 0}]
+
+    reclaim_stale_claims(client, settings, candidates)
+
+    assert client.calls == [
+        ("table_update", "articles", {"status": "pending", "retry_count": 1, "claimed_at": None})
+    ]
+
+
+def test_reclaim_stale_claims_fails_when_retries_exhausted():
+    client = _RecordingClient()
+    settings = Settings(
+        supabase_url="http://x", supabase_service_role_key="key", render_max_retries=1
+    )
+    candidates = [{"id": "abc", "retry_count": 0}]
+
+    reclaim_stale_claims(client, settings, candidates)
+
+    assert client.calls == [
+        (
+            "table_update",
+            "articles",
+            {"status": "failed", "retry_count": 1, "failure_reason": "stale_claim_max_retries"},
+        )
+    ]
