@@ -55,3 +55,11 @@ jobs:
       - run: dart run build_runner build
       - run: flutter analyze
       - run: flutter test
+      - name: Compile-check the Android build
+        # Catches native/Gradle build breakage that flutter analyze/flutter test
+        # can't see (e.g. a pubspec.lock bump that silently breaks Kotlin plugin
+        # compilation — see v0.6.0's release). Debug, not release: same Kotlin/Java
+        # compile step runs for every build variant, so debug catches this equally
+        # well while skipping R8/minification/signing — no release secrets needed
+        # here since --dart-define values don't affect whether it compiles.
+        run: flutter build apk --debug
