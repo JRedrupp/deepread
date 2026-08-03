@@ -302,7 +302,11 @@ gh pr merge --squash
 
 ---
 
-### Task 5: Add `mobile-android-build` as a required status check (post-merge)
+### Task 5: Add `mobile-android-build` and `changes` as required status checks (post-merge)
+
+**Decision (2026-08-03):** the user chose to make `mobile-android-build` required despite it giving back most of the wall-clock win the job split earned (final whole-branch review measured baseline 333s → ~74s with it non-required → ~306s with it required), because it restores the exact Android-compile-breakage coverage the check exists for. This is a deliberate tradeoff, not an oversight — do not "optimize" it back to non-required without asking again.
+
+The final whole-branch review also found that none of `changes`, `backend-test`, or `mobile-test`'s `if:` conditions use a status function, so GitHub applies an implicit `success()` on `needs`. If the `changes` job itself fails (checkout error, `dorny/paths-filter` outage, etc.), every gated job reports `skipped` — and a `skipped` required check still counts as passing, so a `changes` failure would make the whole PR show green having run nothing. `changes` runs unconditionally on every PR (no gate), so adding it to the required contexts closes this gap for free — it can never itself end up unsatisfied.
 
 **This modifies shared branch protection settings on `develop` and `main` — confirm explicitly with the user before running these commands. Do not run this as an unattended/autonomous step.**
 
@@ -314,7 +318,7 @@ gh pr view --json state,mergedAt
 
 Expected: `state: MERGED`.
 
-- [ ] **Step 2: Add the new required check on `develop`**
+- [ ] **Step 2: Add the new required checks on `develop`**
 
 ```bash
 gh api repos/JRedrupp/deepread/branches/develop/protection/required_status_checks \
@@ -322,10 +326,11 @@ gh api repos/JRedrupp/deepread/branches/develop/protection/required_status_check
   -f 'contexts[]=backend-test' \
   -f 'contexts[]=mobile-test' \
   -f 'contexts[]=mobile-android-build' \
+  -f 'contexts[]=changes' \
   -F strict=true
 ```
 
-- [ ] **Step 3: Add the same required check on `main`**
+- [ ] **Step 3: Add the same required checks on `main`**
 
 ```bash
 gh api repos/JRedrupp/deepread/branches/main/protection/required_status_checks \
@@ -333,6 +338,7 @@ gh api repos/JRedrupp/deepread/branches/main/protection/required_status_checks \
   -f 'contexts[]=backend-test' \
   -f 'contexts[]=mobile-test' \
   -f 'contexts[]=mobile-android-build' \
+  -f 'contexts[]=changes' \
   -F strict=true
 ```
 
@@ -343,13 +349,15 @@ gh api repos/JRedrupp/deepread/branches/develop/protection/required_status_check
 gh api repos/JRedrupp/deepread/branches/main/protection/required_status_checks --jq '.contexts'
 ```
 
-Expected: both print `["backend-test", "mobile-test", "mobile-android-build"]`.
+Expected: both print `["backend-test", "mobile-test", "mobile-android-build", "changes"]`.
 
 ---
 
 ### Task 6: Validate skip behavior with throwaway branches (post-merge)
 
 This is the only way to observe the path-filter skip logic actually working, per the Global Constraints testing limitation — it requires `develop` to already have the merged `ci.yml` changes, and the test branches must **not** touch `ci.yml` themselves.
+
+The final whole-branch review flagged that testing only backend-only and mobile-only diffs leaves the highest-risk case unverified: a PR matching **neither** filter (e.g. docs-only or `supabase/`-only), where every required check skips simultaneously. That's the exact case the design doc promises works ("a docs-only or migration-only PR skips straight to green") and the one where "is this PR actually mergeable?" is a real question — Step 6 below adds it.
 
 - [ ] **Step 1: Confirm `develop` has the merged changes**
 
@@ -364,7 +372,7 @@ Expected: shows the commits from this PR.
 
 ```bash
 git checkout -b test/ci-skip-backend-only origin/develop
-echo "" >> backend/README.md 2>/dev/null || echo "# scratch" > backend/SCRATCH_DELETE_ME.md
+echo "# scratch" > backend/SCRATCH_DELETE_ME.md
 git add -A
 git commit -m "Scratch: backend-only change to test CI path filtering (do not merge)"
 git push -u origin test/ci-skip-backend-only
@@ -377,7 +385,7 @@ gh pr create --base develop --draft --title "[scratch] test CI skip: backend-onl
 gh pr checks --watch
 ```
 
-Expected: `backend-test` shows `pass`; `mobile-test` and `mobile-android-build` show `skipped`; the PR's merge-readiness (`gh pr view --json mergeStateStatus`) is not blocked by the skipped mobile checks.
+Expected: `backend-test` and `changes` show `pass`; `mobile-test` and `mobile-android-build` show `skipped`; the PR's merge-readiness (`gh pr view --json mergeStateStatus`) is not blocked by the skipped mobile checks.
 
 - [ ] **Step 4: Clean up the backend-only scratch branch**
 
@@ -397,17 +405,36 @@ gh pr create --base develop --draft --title "[scratch] test CI skip: mobile-only
 gh pr checks --watch
 ```
 
-Expected: `mobile-test` and `mobile-android-build` show `pass`; `backend-test` shows `skipped`.
+Expected: `mobile-test`, `mobile-android-build`, and `changes` show `pass`; `backend-test` shows `skipped`.
 
 ```bash
 gh pr close test/ci-skip-mobile-only --delete-branch
 ```
 
-- [ ] **Step 6: Delete the local scratch branches**
+- [ ] **Step 6: Repeat for a diff matching neither filter (docs-only)**
+
+```bash
+git checkout -b test/ci-skip-neither origin/develop
+echo "# scratch" > docs/SCRATCH_DELETE_ME.md
+git add -A
+git commit -m "Scratch: docs-only change to test CI path filtering (do not merge)"
+git push -u origin test/ci-skip-neither
+gh pr create --base develop --draft --title "[scratch] test CI skip: neither filter (docs-only)" --body "Throwaway PR to confirm ALL of backend-test/mobile-test/mobile-android-build skip on a diff matching neither filter, and the PR is still mergeable. Do not merge — close after checking."
+gh pr checks --watch
+gh pr view --json mergeStateStatus
+```
+
+Expected: `changes` shows `pass`; `backend-test`, `mobile-test`, and `mobile-android-build` all show `skipped`; `mergeStateStatus` is not blocked by the three skipped checks.
+
+```bash
+gh pr close test/ci-skip-neither --delete-branch
+```
+
+- [ ] **Step 7: Delete the local scratch branches**
 
 ```bash
 git checkout develop
-git branch -D test/ci-skip-backend-only test/ci-skip-mobile-only
+git branch -D test/ci-skip-backend-only test/ci-skip-mobile-only test/ci-skip-neither
 ```
 
 ## Self-Review Notes
