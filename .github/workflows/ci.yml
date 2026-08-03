@@ -11,6 +11,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # SAFETY INVARIANT: gate downstream jobs with a job-level `if: needs.changes.outputs.*`,
+  # never with a workflow-level `on.pull_request.paths`/`on.push.paths` filter. A job skipped
+  # via job-level `if:` reports conclusion `skipped`, which satisfies a required status check.
+  # A workflow that never triggers at all (path-filtered at the `on:` level) leaves a required
+  # check with no run reported for that commit, which blocks merging forever. Do not "simplify"
+  # this job away in favor of `on.<event>.paths`.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -95,26 +101,42 @@ jobs:
         with:
           path: mobile/.dart_tool
           key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        id: gradle-cache
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*', 'mobile/android/gradle.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
       - run: flutter pub get
       - run: dart run build_runner build
-      - name: Compile-check the Android build (single ABI)
-        # Same rationale as before (catches native/Gradle build breakage flutter
-        # analyze/flutter test can't see) but now runs in parallel with mobile-test
-        # instead of serialized after it, with a Gradle cache, and building only
-        # arm64 instead of the default multi-ABI fat APK — this is a CI compile
-        # check, not a distributed artifact, and this app has no ABI-specific
-        # native/NDK code (just Kotlin plugins, which compile the same per ABI).
-        run: flutter build apk --debug --target-platform android-arm64
+      - name: Compile-check the Android build
+        # flutter analyze/flutter test never touch native/Gradle compilation, so a change
+        # that silently breaks it (e.g. a pubspec.lock bump breaking a Kotlin plugin's
+        # compilation) would otherwise go undetected until a real release build — this
+        # repo hit exactly that failure mode once, in the v0.6.0 release. --debug uses the
+        # same compile step as release but skips R8/minification/signing, so it needs no
+        # release secrets and runs in parallel with mobile-test instead of serialized after
+        # it, with a Gradle cache to keep it fast.
+        run: flutter build apk --debug
+      - uses: actions/cache/save@v6
+        # Only save on push to develop (this is what warms the cache other branches restore
+        # from — see CLAUDE.md's CI section), and only when restore didn't already get an exact
+        # key hit, mirroring what the old combined actions/cache@v6 step did internally. Key
+        # here must stay identical to the restore step's above, or an edit to one silently
+        # orphans the other.
+        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*', 'mobile/android/gradle.properties') }}
 
   mobile-ios-compile-check:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
     runs-on: macos-latest
     defaults:
       run:
@@ -132,7 +154,7 @@ jobs:
       - run: flutter pub get
       - run: dart run build_runner build
       - name: Compile-check the iOS build
-        # Same rationale as mobile-test's Android compile-check: flutter
+        # Same rationale as mobile-android-build's compile-check: flutter
         # analyze/flutter test never touch native Swift compilation, so a
         # plugin bump or native-code change (e.g. AppDelegate.swift) that
         # breaks the iOS build would otherwise only surface at release-build

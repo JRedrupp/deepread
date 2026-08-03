@@ -131,17 +131,35 @@ moves via `release/*` or `hotfix/*` merges and always reflects what's actually d
   an automated `main` → `develop` sync PR.
 - **`hotfix/X.Y.Z`** — same as `release/*` but branched from `main` for urgent fixes; goes through
   the same workflow and back-merge.
-- `.github/workflows/ci.yml` runs backend `pytest` and mobile `flutter analyze`/`flutter test` on
-  every PR into `develop` or `main`, and both branches require it to pass (no required review
-  count — solo-maintainer repo, and GitHub disallows self-approval anyway). It also runs on every
+- `.github/workflows/ci.yml` runs a `changes` job first (`dorny/paths-filter@v3`, diffing the
+  triggering commit against `backend/**`/`mobile/**`), then backend `pytest` (`backend-test`),
+  mobile `flutter analyze`/`flutter test` (`mobile-test`), a separate parallel Android debug-APK
+  compile check (`mobile-android-build`, split out of `mobile-test` since that compile step used to
+  dominate its runtime), and an iOS debug compile check (`mobile-ios-compile-check`). All four are
+  gated on `changes` via `needs: changes` plus a job-level `if: needs.changes.outputs.<backend|
+  mobile> == 'true'` — never via a workflow-level `on.pull_request.paths`/`on.push.paths` filter,
+  because a job skipped by job-level `if:` reports conclusion `skipped` (which satisfies a required
+  status check), while a workflow that never triggers at all leaves a required check permanently
+  unsatisfied and blocks merging forever (see the comment above the `changes` job in `ci.yml` for
+  the same invariant stated inline). `backend-test` and `mobile-test` are today's required status
+  checks on `develop` and `main` (no required review count — solo-maintainer repo, and GitHub
+  disallows self-approval anyway); `changes` and `mobile-android-build` are meant to join them as
+  required checks too (the `changes` job itself must be required, otherwise a failure in the
+  path-filter — as opposed to a legitimate "not applicable" skip — would leave every downstream job
+  skipped and every required check green) but that branch-protection change is applied out-of-band
+  via `gh api`, not by this file. `mobile-ios-compile-check` is gated the same way but is not a
+  required check, so nothing blocks on it failing or being skipped. The workflow also runs on every
   `push` to `develop` (i.e. again right after a PR merges) — that's not redundant, it's what warms
-  the Actions cache at the default-branch scope so the *next* PR's first run can restore from it
-  instead of starting fully cold (PR-scoped caches live under `refs/pull/N/merge` and can't be
-  reused by other PRs; only a default-branch — or same/base-branch — cache can). Not added on
-  `main` too: GitHub Actions cache lookups already fall back to the repo's default branch
-  (`develop`) from anywhere, including `release/*`/`hotfix/*` PRs targeting `main`, so a
-  `main`-scoped cache would be redundant — and would only add pressure on the repo's Actions cache
-  quota, which is already near/over the 10GB eviction cap (see TECH_DEBT.md).
+  the Actions cache (pub/`.dart_tool`, Gradle, Playwright Chromium) at the default-branch scope so
+  the *next* PR's first run can restore from it instead of starting fully cold (PR-scoped caches
+  live under `refs/pull/N/merge` and can't be reused by other PRs; only a default-branch — or
+  same/base-branch — cache can); `mobile-android-build`'s Gradle cache follows the same pattern
+  explicitly, with a `restore@v6` step that always runs and a `save@v6` step gated to
+  `github.event_name == 'push'` so PR runs restore develop's warmed cache without each PR minting
+  its own multi-GB copy. Not added on `main` too: GitHub Actions cache lookups already fall back to
+  the repo's default branch (`develop`) from anywhere, including `release/*`/`hotfix/*` PRs
+  targeting `main`, so a `main`-scoped cache would be redundant — and would only add pressure on the
+  repo's Actions cache quota, which is already near/over the 10GB eviction cap (see TECH_DEBT.md).
 
 ## Supabase (`supabase/migrations/`)
 
