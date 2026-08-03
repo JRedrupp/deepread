@@ -30,6 +30,8 @@ jobs:
               - '.github/workflows/ci.yml'
 
   backend-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
