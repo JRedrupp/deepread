@@ -391,7 +391,7 @@ class SyncService {
     await applyRetentionPolicy(db);
 
     // Every row was attempted (isolation above), but callers still need to
-    // know something went wrong: FeedListScreen's sync-button handler shows
+    // know something went wrong: HomeShell's sync-button handler shows
     // this via a SnackBar, and the WorkManager background task uses it to
     // retry sooner with backoff instead of waiting the full 15-minute
     // periodic interval. Raised after the loop (and after any watermark
