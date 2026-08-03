@@ -12,6 +12,9 @@
 Icon?
 **/Pods/
 **/.symlinks/
+# No CocoaPods installed in this dev environment to generate/maintain a real lockfile here;
+# whoever next builds this on a real Mac should commit one and remove this line.
+Podfile.lock
 profile
 xcuserdata
 **/.generated/

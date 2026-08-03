@@ -15,3 +15,6 @@ backend/render-output/
 
 # Local Claude Code instructions (not shared with the team)
 CLAUDE.local.md
+
+# Claude Code superpowers scratch workspace
+.superpowers/

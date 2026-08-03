@@ -63,3 +63,31 @@ jobs:
         # well while skipping R8/minification/signing — no release secrets needed
         # here since --dart-define values don't affect whether it compiles.
         run: flutter build apk --debug
+
+  mobile-ios-compile-check:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/cache@v6
+        with:
+          path: mobile/.dart_tool
+          key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
+      - run: flutter pub get
+      - run: dart run build_runner build
+      - name: Compile-check the iOS build
+        # Same rationale as mobile-test's Android compile-check: flutter
+        # analyze/flutter test never touch native Swift compilation, so a
+        # plugin bump or native-code change (e.g. AppDelegate.swift) that
+        # breaks the iOS build would otherwise only surface at release-build
+        # time — which this project currently has no pipeline to even attempt
+        # for iOS. --debug mirrors the Android job (same compile step as
+        # release, skips extra work); --no-codesign skips code-signing, which
+        # needs an Apple signing identity/certs not available in CI.
+        run: flutter build ios --debug --no-codesign
