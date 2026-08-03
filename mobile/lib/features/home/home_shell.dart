@@ -86,9 +86,19 @@ class _HomeShellState extends State<HomeShell> {
     // disposed once AuthGate reacts to the `signedOut` auth event.
 
     try {
+      // signOut() fires the `signedOut` event (and AuthGate's navigation
+      // to LoginScreen) essentially synchronously with the local session
+      // removal, before its best-effort server-side token revoke. Swallow
+      // failures here (e.g. offline revoke) — they must not block the
+      // local wipe below.
       await AppSupabase.client.auth.signOut();
     } catch (_) {}
 
+    // Drain any sync already in flight (the app-open sync from initState,
+    // or one launched by _addFeed) before wiping — syncNow() only checks
+    // currentUser once at its start, so signOut() above prevents *new*
+    // syncs but can't stop one already past that check. It will likely
+    // start throwing (401s) once the token's gone — irrelevant, swallowed.
     try {
       await _syncFuture;
     } catch (_) {}
@@ -102,6 +112,9 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _addFeed(String url) async {
     await FeedRepository(widget.db).subscribe(url);
+    // Pull immediately rather than waiting for the next periodic
+    // background sync, so the feed's title (and any already-rendered
+    // articles) show up right away.
     unawaited(_syncNow());
   }
 

@@ -11,6 +11,7 @@ void main() {
   Future<void> pumpShell(
     WidgetTester tester, {
     List<LocalFeed> feeds = const [],
+    Future<void> Function(LocalFeed feed)? onUnsubscribe,
   }) async {
     SharedPreferences.setMockInitialValues({});
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -31,6 +32,7 @@ void main() {
           db: db,
           feedsStream: Stream.value(feeds),
           articlesStream: Stream.value(const []),
+          onUnsubscribe: onUnsubscribe,
         ),
       ),
     );
@@ -86,5 +88,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Example Feed'), findsOneWidget);
+  });
+
+  testWidgets('confirming the unsubscribe dialog on the Feeds tab calls onUnsubscribe with the tapped feed',
+      (tester) async {
+    LocalFeed? removedFeed;
+    const feed = LocalFeed(id: 'feed-1', url: 'https://example.com/feed', title: 'Example Feed');
+    await pumpShell(
+      tester,
+      feeds: [feed],
+      onUnsubscribe: (tapped) async => removedFeed = tapped,
+    );
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unsubscribe'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unsubscribe').last);
+    await tester.pumpAndSettle();
+
+    expect(removedFeed?.id, 'feed-1');
+    expect(find.byType(AlertDialog), findsNothing);
   });
 }

@@ -30,6 +30,9 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
   @override
   void initState() {
     super.initState();
+    // Unsorted/unfiltered at the query level — sort and filter are applied
+    // client-side in the builder below so toggling them doesn't tear down
+    // and resubscribe the underlying drift stream.
     _articlesStream = widget.articlesStream ??
         (widget.db.select(widget.db.localArticles)..where((a) => a.feedId.equals(widget.feed.id))).watch();
   }

@@ -112,10 +112,16 @@ class AppTheme {
 
 /// A small bracket-tag status badge, e.g. `[NEW]`, `[SYNCED]`, `[FAILED]`.
 class StatusTag extends StatelessWidget {
-  const StatusTag(this.label, {super.key, this.color});
+  const StatusTag(this.label, {super.key, this.color, this.maxLines, this.overflow});
 
   final String label;
   final Color? color;
+
+  /// Both default to null (unbounded), preserving existing callers'
+  /// current unconstrained-text behavior. Pass both when the caller needs
+  /// truncation, e.g. a feed-name badge that can't be trusted to fit.
+  final int? maxLines;
+  final TextOverflow? overflow;
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +129,8 @@ class StatusTag extends StatelessWidget {
     return Text(
       '[$label]',
       style: AppTheme.metadataStyle(context, color: tagColor, fontSize: 11),
+      maxLines: maxLines,
+      overflow: overflow,
     );
   }
 }

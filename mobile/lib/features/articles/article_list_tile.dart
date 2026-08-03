@@ -21,12 +21,23 @@ class ArticleListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final secondaryColor = isDark ? AppTheme.textSecondary : AppTheme.lightTextSecondary;
+
     return Card(
       child: ListTile(
         title: Text(article.title),
         subtitle: Row(
           children: [
-            if (feedLabel != null) StatusTag(feedLabel!, color: AppTheme.textSecondary),
+            if (feedLabel != null)
+              Flexible(
+                child: StatusTag(
+                  feedLabel!,
+                  color: secondaryColor,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             if (feedLabel != null) const SizedBox(width: 8),
             if (!article.isRead) const StatusTag('NEW'),
             if (!article.isRead) const SizedBox(width: 8),
