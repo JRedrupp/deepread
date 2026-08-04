@@ -1,9 +1,7 @@
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 
 import '../../data/local/database.dart';
-import '../../theme/app_theme.dart';
-import 'article_reader_screen.dart';
+import 'article_list_tile.dart';
 
 enum _SortOrder { newestFirst, oldestFirst }
 
@@ -90,36 +88,7 @@ class _ArticleListScreenState extends State<ArticleListScreen> {
             itemCount: articles.length,
             separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
-              final article = articles[index];
-              return Card(
-                child: ListTile(
-                  title: Text(article.title),
-                  subtitle: Row(
-                    children: [
-                      if (!article.isRead) const StatusTag('NEW'),
-                      if (!article.isRead) const SizedBox(width: 8),
-                      if (article.localPath == null) StatusTag(article.evicted ? 'REMOVED' : 'SUMMARY ONLY'),
-                      if (article.localPath == null) const SizedBox(width: 8),
-                      Text(
-                        article.publishedAt?.toIso8601String().split('T').first ?? '',
-                        style: AppTheme.metadataStyle(context),
-                      ),
-                    ],
-                  ),
-                  onTap: () async {
-                    await (widget.db.update(widget.db.localArticles)
-                          ..where((a) => a.id.equals(article.id)))
-                        .write(const LocalArticlesCompanion(isRead: Value(true)));
-                    if (context.mounted) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ArticleReaderScreen(article: article),
-                        ),
-                      );
-                    }
-                  },
-                ),
-              );
+              return ArticleListTile(db: widget.db, article: articles[index]);
             },
           );
         },

@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/local/database.dart';
 import '../../data/remote/supabase_client.dart';
-import '../feeds/feed_list_screen.dart';
+import '../home/home_shell.dart';
 import 'login_screen.dart';
 
 /// Swaps between the login screen and the app itself based on Supabase
@@ -23,7 +23,7 @@ class AuthGate extends StatelessWidget {
         if (session == null) {
           return const LoginScreen();
         }
-        return FeedListScreen(db: db);
+        return HomeShell(db: db);
       },
     );
   }
