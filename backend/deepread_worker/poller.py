@@ -62,9 +62,12 @@ async def _poll_one_feed(db: Client, http: httpx.AsyncClient, feed_id: str, feed
             }
         ).execute()
 
-    db.table("feeds").update({"last_polled_at": datetime.now(UTC).isoformat()}).eq(
-        "id", feed_id
-    ).execute()
+    update_payload: dict[str, str] = {"last_polled_at": datetime.now(UTC).isoformat()}
+    title = _feed_title(parsed.feed)
+    if title is not None:
+        update_payload["title"] = title
+
+    db.table("feeds").update(update_payload).eq("id", feed_id).execute()
 
 
 def _entry_published_at(entry: feedparser.FeedParserDict) -> str | None:
@@ -77,3 +80,15 @@ def _entry_published_at(entry: feedparser.FeedParserDict) -> str | None:
     # unbounded-length tuple that could collide with the tzinfo kwarg.
     parsed = cast(time.struct_time, published_parsed)
     return datetime(*parsed[:6], tzinfo=UTC).isoformat()
+
+
+def _feed_title(feed: feedparser.FeedParserDict) -> str | None:
+    """Feed-level <title>, stripped. None (never an empty string) if the
+    feed has no title or only whitespace — the caller uses that to omit
+    `title` from the update payload entirely, rather than overwriting a
+    previously-set value with blank."""
+    title = feed.get("title")
+    if title is None:
+        return None
+    stripped = title.strip()
+    return stripped or None
