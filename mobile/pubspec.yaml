@@ -74,6 +74,15 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
 flutter:
 
+  # Swift Package Manager defaults on for Flutter stable, and this project's
+  # Xcode settings already carry latent SPM integration alongside a
+  # still-active CocoaPods Podfile. workmanager_apple 0.10.7 made every
+  # plugin SPM-capable, which flips Flutter off the CocoaPods path and broke
+  # the iOS build (see TODO.md). Pin to CocoaPods, the only path ever
+  # verified, until a deliberate Xcode-verified SPM migration happens.
+  config:
+    enable-swift-package-manager: false
+
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
