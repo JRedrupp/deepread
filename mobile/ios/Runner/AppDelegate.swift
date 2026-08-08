@@ -8,9 +8,8 @@ import workmanager_apple
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // workmanager_apple 0.9.1+2 (pinned in pubspec.yaml's dependency_overrides for an
-    // unrelated Android AGP-9 Gradle issue — see that file's comment) has no
-    // auto-registration path for BGTaskScheduler: registerPeriodicTask(request:), the
+    // workmanager_apple (as of 0.9.10) has no auto-registration path for
+    // BGTaskScheduler: registerPeriodicTask(request:), the
     // Dart-invoked host API, only ever calls BGTaskScheduler.shared.submit(...) — it never
     // calls BGTaskScheduler.shared.register(forTaskWithIdentifier:using:). The only place
     // that ever registers the launch handler is this static method, and Apple requires
