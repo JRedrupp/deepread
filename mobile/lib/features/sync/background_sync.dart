@@ -41,8 +41,9 @@ class BackgroundSync {
       _syncTaskName,
       _syncTaskName,
       // iOS treats this as a hint, not a guarantee (BGTaskScheduler decides
-      // actual timing). See TODO.md — iOS also needs Info.plist entries
-      // (BGTaskSchedulerPermittedIdentifiers) that aren't set up yet.
+      // actual timing). Info.plist's BGTaskSchedulerPermittedIdentifiers entry
+      // and AppDelegate.swift's launch-handler registration are wired up — see
+      // TECH_DEBT.md for the "unverified on real hardware" caveat.
       //
       // Re-registering with a different frequency/wifiOnly later (e.g. from
       // the Settings screen) relies on ExistingPeriodicWorkPolicy defaulting
