@@ -1,8 +1,5 @@
 # TODO
 
-MVP scope (auth screens, sync service, add-feed wiring, and iOS background sync config) is now
-fully built. Everything below is deferred/out-of-scope for the MVP, not missing MVP work.
-
 ## Features
 
 - [ ] Feed auto-discovery + OPML import (MVP is paste-URL only)
