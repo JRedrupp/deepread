@@ -48,7 +48,7 @@ dependencies:
   archive: ^4.0.9
   google_fonts: ^8.2.0
   path: ^1.9.1
-  postgrest: ^2.8.0
+  postgrest: ^2.9.1
   shared_preferences: ^2.5.3
   url_launcher: ^6.3.1
 
