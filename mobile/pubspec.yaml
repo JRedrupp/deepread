@@ -62,7 +62,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  drift_dev: ^2.34.5
+  drift_dev: ^2.34.6
   build_runner: ^2.16.1
   flutter_launcher_icons: ^0.14.4
   sqlite3: ^3.5.2
