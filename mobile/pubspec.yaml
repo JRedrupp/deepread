@@ -37,7 +37,7 @@ dependencies:
   supabase_flutter: ^2.17.2
   drift: ^2.34.4
   path_provider: ^2.1.6
-  flutter_riverpod: ^3.4.2
+  flutter_riverpod: ^3.4.3
   webview_flutter: ^4.14.1
   # workmanager_android's Gradle `agpMajor < 9` guard around self-applying the
   # Kotlin plugin (which broke this project's release build under
