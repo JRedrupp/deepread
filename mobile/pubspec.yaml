@@ -44,7 +44,7 @@ dependencies:
   # android.builtInKotlin=false — see git history for the old workaround) was
   # fixed upstream in workmanager_android 0.10.5. No pin/override needed above
   # 0.10.7.
-  workmanager: 0.10.9
+  workmanager: 0.10.10
   archive: ^4.0.9
   google_fonts: ^8.2.0
   path: ^1.9.1
